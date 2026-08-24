@@ -444,7 +444,12 @@ describe('ROUTINES.md: two live instances both fire', () => {
     const dir = makeWorkspace({});
     scaffoldWorkspace(dir);
     const gitignore = fs.readFileSync(path.join(dir, '.gitignore'), 'utf-8');
-    assert.match(gitignore, /^\.rundock\/$/m,
+    // The plugin framework's managed ignore block (lib/workspace/scaffold.js's
+    // migratePluginGitignore) replaced the single ".rundock/" line with
+    // ".rundock/*" plus narrow un-ignores for tracked plugin packages.
+    // routine-state.json lives directly under .rundock/, not under
+    // .rundock/plugins/, so it stays ignored either way.
+    assert.match(gitignore, /^\.rundock\/\*$/m,
       'the scaffold must ignore the state folder, which is what makes the git half of the caveat true');
   });
 

@@ -341,11 +341,17 @@ describe('scaffoldWorkspace', () => {
     const dir = useWorkspace({ claudeMd: '# x' });
     srv.scaffoldWorkspace(dir);
     const before = fs.readFileSync(path.join(dir, '.claude', 'settings.local.json'), 'utf-8');
+    const gitignoreBefore = fs.readFileSync(path.join(dir, '.gitignore'), 'utf-8');
     srv.scaffoldWorkspace(dir);
     const after = fs.readFileSync(path.join(dir, '.claude', 'settings.local.json'), 'utf-8');
     assert.strictEqual(after, before);
-    const gitignore = fs.readFileSync(path.join(dir, '.gitignore'), 'utf-8');
-    assert.strictEqual((gitignore.match(/\.rundock\//g) || []).length, 1);
+    const gitignoreAfter = fs.readFileSync(path.join(dir, '.gitignore'), 'utf-8');
+    // Idempotent: the second scaffold run must not touch the gitignore at
+    // all, and the managed "ignore everything under .rundock/" line (now
+    // part of a multi-line block that lets plugin packages be tracked; see
+    // lib/workspace/scaffold.js's migratePluginGitignore) appears exactly once.
+    assert.strictEqual(gitignoreAfter, gitignoreBefore);
+    assert.strictEqual((gitignoreAfter.match(/^\.rundock\/\*$/gm) || []).length, 1);
   });
 
   test('stale permission-hook entries and legacy Write/Edit matchers are removed', () => {
