@@ -17,11 +17,14 @@ const { buildDispatch } = require('../../lib/protocol/handlers/index.js');
 const { _internal: srv } = require('../../server.js');
 const config = require('../../lib/config.js');
 
-// The full routing surface of the dispatch table, frozen: 34 message types
+// The full routing surface of the dispatch table, frozen: 42 message types
 // plus save_agent's two legacy aliases. The four root shims (chat, delegate,
 // end_delegation, flush_buffer) must NEVER appear here: chat is the
 // kill-window chat shim, delegate/end_delegation are delegation glue, and
-// flush_buffer drains safeSend's own reconnect buffer.
+// flush_buffer drains safeSend's own reconnect buffer. The eight
+// plugin_*/get_plugins/*_plugin types are the plugin framework's whole
+// reserved message family (lib/protocol/handlers/plugins.js): the only
+// place they, or any plugin message type, are ever registered.
 const EXPECTED_TYPES = [
   'permission_response', 'cancel',
   'get_workspaces', 'client_render_time', 'list_workspaces', 'set_workspace',
@@ -34,6 +37,8 @@ const EXPECTED_TYPES = [
   'save_skill', 'delete_skill', 'save_routine', 'delete_routine', 'set_routine_paused',
   'search_conversations', 'search_universal', 'get_session_history',
   'save_file', 'create_path', 'reveal_in_finder',
+  'get_plugins', 'install_plugin', 'enable_plugin', 'disable_plugin',
+  'update_plugin', 'uninstall_plugin', 'plugin_data_get', 'plugin_data_replace',
 ];
 
 function captureWs() {

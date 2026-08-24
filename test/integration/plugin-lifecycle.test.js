@@ -5,10 +5,9 @@
 //
 // Most enable-path tests use a manifest with no agents, skills, or
 // resources: the smallest case that fully exercises install/enable/disable/
-// update/uninstall without needing lib/plugins/storage.js, which does not
-// exist yet (a plugin declaring resources is still refused, tested below).
-// A separate describe block below covers real agent/skill materialization,
-// through lib/plugins/materialize.js, end to end.
+// update/uninstall. Separate describe blocks below cover real agent/skill
+// materialization (lib/plugins/materialize.js) and resource bootstrap/read/
+// write (lib/plugins/storage.js) end to end.
 const { test, describe, after } = require('node:test');
 const assert = require('node:assert');
 const fs = require('node:fs');
@@ -120,16 +119,24 @@ describe('enablePlugin', () => {
     assert.strictEqual(entry.status, 'enabled');
   });
 
-  test('refuses to enable a plugin declaring resources, with a clear message (not a crash)', () => {
-    useWorkspace({ agents: standardTeam() });
+  test('enabling a plugin with a declared resource bootstraps it from its template', () => {
+    const ws = useWorkspace({ agents: standardTeam() });
     const src = makeSource(
       { id: 'plugin-a', resources: [{ id: 'state', file: 'state.json', template: 'templates/state.json' }] },
-      { 'templates/state.json': '{}' },
+      { 'templates/state.json': '{"schemaVersion":1,"revision":99,"updatedAt":"stale","items":[]}' },
     );
     lifecycle.installFromFolder(src);
     const result = lifecycle.enablePlugin('plugin-a');
-    assert.strictEqual(result.success, false);
-    assert.match(result.errors[0].message, /storage\.js/);
+    assert.strictEqual(result.success, true, JSON.stringify(result.errors));
+
+    const dataPath = path.join(ws, '.rundock', 'plugin-data', 'plugin-a', 'state.json');
+    const doc = JSON.parse(fs.readFileSync(dataPath, 'utf-8'));
+    assert.strictEqual(doc.schemaVersion, 1);
+    assert.deepStrictEqual(doc.items, []);
+    // Bootstrap normalizes revision/updatedAt rather than trusting the
+    // template's own example values.
+    assert.strictEqual(doc.revision, 0);
+    assert.notStrictEqual(doc.updatedAt, 'stale');
   });
 
   test('fails cleanly when the plugin is not installed', () => {
