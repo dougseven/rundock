@@ -1,8 +1,8 @@
 'use strict';
 // lib/plugins/lifecycle.js: the pure/synchronous pieces of the enable
-// transaction that Phase 1 implements fully (orchestrator resolution,
-// runtime-slug conflict detection, org-chart order assignment), tested
-// directly rather than only through the full install/enable round trip.
+// transaction (orchestrator resolution, runtime-slug conflict detection,
+// org-chart order assignment), tested directly rather than only through the
+// full install/enable round trip.
 const { test, describe, after } = require('node:test');
 const assert = require('node:assert');
 const fs = require('node:fs');

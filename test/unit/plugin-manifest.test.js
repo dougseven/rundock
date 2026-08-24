@@ -17,7 +17,7 @@ after(cleanup);
 // mkdtemp suffix) so the "id must match its package directory name" rule has
 // something meaningful to check, and the result is realpath'd because
 // several rules (path safety, symlink rejection) require an already-resolved
-// base path — the same contract discovery.js and lifecycle.js honor when
+// base path, the same contract discovery.js and lifecycle.js honor when
 // they call these functions for real.
 function pkg(overrides, extraFiles) {
   const parent = makeTempDir('plugin-parent-');
@@ -375,7 +375,7 @@ describe('validateManifest: resources', () => {
 
 describe('resolveSafePackagePath', () => {
   // resolveSafePackagePath's contract is that its base directory is already
-  // realpath'd (documented at the top of manifest.js) — realpath every temp
+  // realpath'd (documented at the top of manifest.js): realpath every temp
   // dir here, matching how discovery.js and lifecycle.js actually call it,
   // so these tests do not depend on the test machine's tmpdir having no
   // symlinked ancestors (macOS's /tmp -> /private/tmp, notably, does).

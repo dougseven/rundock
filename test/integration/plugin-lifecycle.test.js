@@ -1,14 +1,14 @@
 'use strict';
 // Round-trip coverage for lib/plugins/lifecycle.js: install, enable, disable,
-// update, uninstall, and workspace-open reconciliation. Phase 1 of the
-// plugin framework spec (.specs/spec-rundock-workspace-plugin-framework.md);
-// see .specs/workplan-rundock-workspace-plugin-framework.md for phase scope.
+// update, uninstall, and workspace-open reconciliation, following the plugin
+// framework spec (.specs/spec-rundock-workspace-plugin-framework.md).
 //
-// Every enable-path test here uses a manifest with no agents, skills, or
-// resources: materialize.js (Phase 2) and storage.js (Phase 3) do not exist
-// yet, and lifecycle.enablePlugin() deliberately refuses anything that would
-// need them (see the PHASE BOUNDARY note at the top of lifecycle.js). One
-// test below exercises that refusal directly.
+// Most enable-path tests use a manifest with no agents, skills, or
+// resources: the smallest case that fully exercises install/enable/disable/
+// update/uninstall without needing lib/plugins/storage.js, which does not
+// exist yet (a plugin declaring resources is still refused, tested below).
+// A separate describe block below covers real agent/skill materialization,
+// through lib/plugins/materialize.js, end to end.
 const { test, describe, after } = require('node:test');
 const assert = require('node:assert');
 const fs = require('node:fs');
@@ -120,16 +120,16 @@ describe('enablePlugin', () => {
     assert.strictEqual(entry.status, 'enabled');
   });
 
-  test('refuses to enable a plugin declaring agents, with a clear Phase 2 message (not a crash)', () => {
+  test('refuses to enable a plugin declaring resources, with a clear message (not a crash)', () => {
     useWorkspace({ agents: standardTeam() });
     const src = makeSource(
-      { id: 'plugin-a', agents: [{ slug: 'lead', source: 'agents/lead.md', reportsTo: '$orchestrator' }] },
-      { 'agents/lead.md': '---\nname: lead\n---\n\nYou lead.' },
+      { id: 'plugin-a', resources: [{ id: 'state', file: 'state.json', template: 'templates/state.json' }] },
+      { 'templates/state.json': '{}' },
     );
     lifecycle.installFromFolder(src);
     const result = lifecycle.enablePlugin('plugin-a');
     assert.strictEqual(result.success, false);
-    assert.match(result.errors[0].message, /Phase 2/);
+    assert.match(result.errors[0].message, /storage\.js/);
   });
 
   test('fails cleanly when the plugin is not installed', () => {
@@ -253,5 +253,133 @@ describe('reconcile', () => {
   test('is a no-op with no workspace selected', () => {
     config.setWorkspace(null);
     assert.doesNotThrow(() => lifecycle.reconcile());
+  });
+});
+
+describe('enablePlugin: real agent and skill materialization', () => {
+  function makeInvestmentishSource(overrides) {
+    return makeSource({
+      id: 'investment-dashboard',
+      agents: [
+        { slug: 'lead-partner', source: 'agents/lead-partner.md', reportsTo: '$orchestrator' },
+        { slug: 'equity-analyst', source: 'agents/equity-analyst.md', reportsTo: 'lead-partner' },
+      ],
+      skills: [{ slug: 'investment-review', source: 'skills/investment-review/SKILL.md' }],
+      ...overrides,
+    }, {
+      'agents/lead-partner.md': '---\nname: lead-partner\nskills: [investment-review]\n---\n\nYou lead.',
+      'agents/equity-analyst.md': '---\nname: equity-analyst\n---\n\nYou analyse.',
+      'skills/investment-review/SKILL.md': '---\nname: Investment Review\n---\n\nHow to review.',
+    });
+  }
+
+  test('materializes both agents (with correct reportsTo chain) and the skill', () => {
+    const ws = useWorkspace({ agents: standardTeam() });
+    lifecycle.installFromFolder(makeInvestmentishSource());
+    const result = lifecycle.enablePlugin('investment-dashboard');
+    assert.strictEqual(result.success, true, JSON.stringify(result.errors));
+
+    const leadPath = path.join(ws, '.claude', 'agents', 'rundock-plugin-investment-dashboard-lead-partner.md');
+    const analystPath = path.join(ws, '.claude', 'agents', 'rundock-plugin-investment-dashboard-equity-analyst.md');
+    const skillPath = path.join(ws, '.claude', 'skills', 'rundock-plugin-investment-dashboard-investment-review', 'SKILL.md');
+    assert.ok(fs.existsSync(leadPath));
+    assert.ok(fs.existsSync(analystPath));
+    assert.ok(fs.existsSync(skillPath));
+
+    const leadContent = fs.readFileSync(leadPath, 'utf-8');
+    assert.match(leadContent, /^reportsTo: chief-of-staff$/m, 'lead-partner reports to the ACTUAL orchestrator frontmatter name');
+    assert.match(leadContent, /^skills: \[rundock-plugin-investment-dashboard-investment-review\]$/m);
+    const analystContent = fs.readFileSync(analystPath, 'utf-8');
+    assert.match(analystContent, /^reportsTo: rundock-plugin-investment-dashboard-lead-partner$/m,
+      'equity-analyst reports to the LEAD PARTNER\'s derived runtime slug, not the workspace orchestrator');
+
+    const state = ownership.readPluginState();
+    assert.deepStrictEqual(state.plugins['investment-dashboard'].materializedAgents.sort(), [
+      'rundock-plugin-investment-dashboard-equity-analyst',
+      'rundock-plugin-investment-dashboard-lead-partner',
+    ]);
+    assert.deepStrictEqual(state.plugins['investment-dashboard'].materializedSkills, [
+      'rundock-plugin-investment-dashboard-investment-review',
+    ]);
+
+    // Claude and Codex both load agent instructions straight from .claude/agents/:
+    // this file existing there under its runtime slug IS that guarantee.
+    const { discoverAgents } = require('../../lib/agents/discovery.js');
+    invalidateAgentCache();
+    const roster = discoverAgents();
+    const materializedLead = roster.find(a => a.name === 'rundock-plugin-investment-dashboard-lead-partner');
+    assert.ok(materializedLead, 'the materialized agent must be visible to normal agent discovery');
+    assert.strictEqual(materializedLead.rundockManaged, true);
+    assert.strictEqual(materializedLead.rundockPlugin, 'investment-dashboard');
+  });
+
+  test('disable removes the materialized files and clears the state record; re-enable regenerates them', () => {
+    const ws = useWorkspace({ agents: standardTeam() });
+    lifecycle.installFromFolder(makeInvestmentishSource());
+    lifecycle.enablePlugin('investment-dashboard');
+    const leadPath = path.join(ws, '.claude', 'agents', 'rundock-plugin-investment-dashboard-lead-partner.md');
+    assert.ok(fs.existsSync(leadPath));
+
+    lifecycle.disablePlugin('investment-dashboard');
+    assert.ok(!fs.existsSync(leadPath));
+    let state = ownership.readPluginState();
+    assert.deepStrictEqual(state.plugins['investment-dashboard'].materializedAgents, []);
+    assert.deepStrictEqual(state.plugins['investment-dashboard'].materializedSkills, []);
+
+    const reenable = lifecycle.enablePlugin('investment-dashboard');
+    assert.strictEqual(reenable.success, true, JSON.stringify(reenable.errors));
+    assert.ok(fs.existsSync(leadPath));
+    state = ownership.readPluginState();
+    assert.strictEqual(state.plugins['investment-dashboard'].materializedAgents.length, 2);
+  });
+
+  test('enablement is blocked when the target runtime slug already exists', () => {
+    const ws = useWorkspace({ agents: standardTeam() });
+    fs.mkdirSync(path.join(ws, '.claude', 'agents'), { recursive: true });
+    fs.writeFileSync(path.join(ws, '.claude', 'agents', 'rundock-plugin-investment-dashboard-lead-partner.md'), 'squatting');
+    lifecycle.installFromFolder(makeInvestmentishSource());
+    const result = lifecycle.enablePlugin('investment-dashboard');
+    assert.strictEqual(result.success, false);
+    assert.match(result.errors[0].message, /already exists/);
+  });
+
+  test('an agent whose source frontmatter name does not match its manifest slug refuses enablement, with nothing materialized', () => {
+    const ws = useWorkspace({ agents: standardTeam() });
+    lifecycle.installFromFolder(makeSource(
+      { id: 'plugin-a', agents: [{ slug: 'lead', source: 'agents/lead.md', reportsTo: '$orchestrator' }] },
+      { 'agents/lead.md': '---\nname: someone-else\n---\n\nHi.' },
+    ));
+    const result = lifecycle.enablePlugin('plugin-a');
+    assert.strictEqual(result.success, false);
+    assert.match(result.errors[0].message, /must equal the manifest slug/);
+    assert.ok(!fs.existsSync(path.join(ws, '.claude', 'agents', 'rundock-plugin-plugin-a-lead.md')));
+    assert.strictEqual(ownership.readPluginState().plugins['plugin-a'].enabled, false);
+  });
+
+  test('update revokes approval AND removes the previous version\'s projections', () => {
+    const ws = useWorkspace({ agents: standardTeam() });
+    lifecycle.installFromFolder(makeInvestmentishSource());
+    lifecycle.enablePlugin('investment-dashboard');
+    const leadPath = path.join(ws, '.claude', 'agents', 'rundock-plugin-investment-dashboard-lead-partner.md');
+    assert.ok(fs.existsSync(leadPath));
+
+    // The updated package drops the equity-analyst agent entirely.
+    const updateSrc = makeSource({
+      id: 'investment-dashboard', version: '1.1.0',
+      agents: [{ slug: 'lead-partner', source: 'agents/lead-partner.md', reportsTo: '$orchestrator' }],
+    }, { 'agents/lead-partner.md': '---\nname: lead-partner\n---\n\nYou lead, alone now.' });
+
+    const result = lifecycle.updateFromFolder('investment-dashboard', updateSrc);
+    assert.strictEqual(result.success, true, JSON.stringify(result.errors));
+    assert.ok(!fs.existsSync(leadPath), 'the prior version\'s projection must be gone once update disables the plugin');
+
+    const state = ownership.readPluginState();
+    assert.strictEqual(state.plugins['investment-dashboard'].enabled, false);
+    assert.deepStrictEqual(state.plugins['investment-dashboard'].materializedAgents, []);
+
+    const reenable = lifecycle.enablePlugin('investment-dashboard');
+    assert.strictEqual(reenable.success, true, JSON.stringify(reenable.errors));
+    assert.ok(fs.existsSync(leadPath));
+    assert.ok(!fs.existsSync(path.join(ws, '.claude', 'agents', 'rundock-plugin-investment-dashboard-equity-analyst.md')));
   });
 });

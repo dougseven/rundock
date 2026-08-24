@@ -17,9 +17,9 @@ function writePluginPackage(destDir, manifest, extraFiles = {}) {
   return destDir;
 }
 
-// A manifest with no agents, skills, or resources: the only shape Phase 1's
-// lifecycle can fully enable, since materialize.js (Phase 2) and storage.js
-// (Phase 3) do not exist yet.
+// A manifest with no agents, skills, or resources: the smallest shape
+// enablePlugin can fully enable without needing lib/plugins/storage.js,
+// which does not exist yet (a plugin declaring resources is still refused).
 function minimalManifest(overrides = {}) {
   return {
     schemaVersion: 1,

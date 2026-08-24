@@ -1725,11 +1725,16 @@ function discoverSkills(existingAgents) {
         const slugPattern = new RegExp('(?<![\\w-])' + slug.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '(?![\\w-])', 'i');
         const assignedAgents = [];
         const assignedIds = new Set();
+        // Platform skills (Doc's own rundock-workspace, rundock-agents, ...)
+        // stay platform-only; plugin skills (rundock-plugin-<id>-<slug>) are
+        // a different, reserved prefix and assign to ordinary specialists
+        // exactly like a user-authored skill, never to a platform agent.
+        const isPlatformSkill = slug.startsWith('rundock-') && !slug.startsWith('rundock-plugin-');
 
         // Pass 1: explicit frontmatter skills
         for (const agent of agents.filter(a => a.status === 'onTeam')) {
-          if (agent.type === 'platform' && !slug.startsWith('rundock-')) continue;
-          if (agent.type !== 'platform' && slug.startsWith('rundock-')) continue;
+          if (agent.type === 'platform' && !isPlatformSkill) continue;
+          if (agent.type !== 'platform' && isPlatformSkill) continue;
           if (agent.skills && agent.skills.some(s => s.toLowerCase() === slug)) {
             assignedAgents.push({ id: agent.id, name: agent.displayName, role: agent.role || '', colour: agent.colour, icon: agent.icon });
             assignedIds.add(agent.id);
@@ -1739,8 +1744,8 @@ function discoverSkills(existingAgents) {
         // Pass 2: body-text scan fallback (skip agents already matched)
         for (const agent of agents.filter(a => a.status === 'onTeam')) {
           if (assignedIds.has(agent.id)) continue;
-          if (agent.type === 'platform' && !slug.startsWith('rundock-')) continue;
-          if (agent.type !== 'platform' && slug.startsWith('rundock-')) continue;
+          if (agent.type === 'platform' && !isPlatformSkill) continue;
+          if (agent.type !== 'platform' && isPlatformSkill) continue;
           const body = agentBody[agent.id] || '';
           if (slugPattern.test(body)) {
             assignedAgents.push({ id: agent.id, name: agent.displayName, role: agent.role || '', colour: agent.colour, icon: agent.icon });
