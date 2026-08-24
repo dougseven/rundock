@@ -69,6 +69,26 @@ describe('handleGetPlugins', () => {
     assert.ok(!JSON.stringify(ws.sent).includes(dir));
   });
 
+  test('the package hash is exposed even before approval, for the enable-confirmation disclosure', () => {
+    useWorkspace({ agents: standardTeam() });
+    lifecycle.installFromFolder(makeSource({
+      id: 'plugin-a', author: 'Test Author',
+      skills: [{ slug: 'review', source: 'skills/review/SKILL.md' }],
+      resources: [{ id: 'state', file: 'state.json', template: 'templates/state.json', maximumBytes: 1024 }],
+    }, {
+      'skills/review/SKILL.md': '---\nname: Review\n---\n\nHow to review.',
+      'templates/state.json': '{"schemaVersion":1,"revision":0,"updatedAt":"x"}',
+    }));
+    const ws = captureWs();
+    plugins.handleGetPlugins(srv.wsHandlerContext, ws, {});
+    const [entry] = ws.sent[0].plugins;
+    assert.strictEqual(entry.status, 'disabled');
+    assert.match(entry.hash, /^sha256:/);
+    assert.strictEqual(entry.author, 'Test Author');
+    assert.deepStrictEqual(entry.skills, [{ slug: 'review' }]);
+    assert.deepStrictEqual(entry.resources, [{ id: 'state', maximumBytes: 1024 }]);
+  });
+
   test('an enabled plugin gets a hash-bearing entryUrl and styleUrls', () => {
     useWorkspace({ agents: standardTeam() });
     lifecycle.installFromFolder(makeSource({

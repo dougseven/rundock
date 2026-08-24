@@ -320,6 +320,35 @@ describe('enablePlugin: real agent and skill materialization', () => {
     assert.strictEqual(materializedLead.rundockPlugin, 'investment-dashboard');
   });
 
+  test('enablePlugin invalidates the agent-roster cache itself: a caller needs no manual invalidateAgentCache() call', () => {
+    const { discoverAgents } = require('../../lib/agents/discovery.js');
+    useWorkspace({ agents: standardTeam() });
+    // Prime a warm cache against the PRE-enable roster, the same way a real
+    // request just before this one would.
+    discoverAgents();
+    lifecycle.installFromFolder(makeInvestmentishSource());
+    const result = lifecycle.enablePlugin('investment-dashboard');
+    assert.strictEqual(result.success, true, JSON.stringify(result.errors));
+    // No invalidateAgentCache() call here: if lifecycle.js does not do this
+    // internally, this read returns the roster from before enablePlugin ran,
+    // for as long as AGENT_CACHE_TTL has left to run.
+    const roster = discoverAgents();
+    assert.ok(roster.some(a => a.name === 'rundock-plugin-investment-dashboard-lead-partner'),
+      'the roster must reflect materialization immediately, not after the cache TTL expires');
+  });
+
+  test('disablePlugin also invalidates the agent-roster cache itself', () => {
+    const { discoverAgents } = require('../../lib/agents/discovery.js');
+    useWorkspace({ agents: standardTeam() });
+    lifecycle.installFromFolder(makeInvestmentishSource());
+    lifecycle.enablePlugin('investment-dashboard');
+    discoverAgents(); // warm the cache against the enabled roster
+    lifecycle.disablePlugin('investment-dashboard');
+    const roster = discoverAgents();
+    assert.ok(!roster.some(a => a.name === 'rundock-plugin-investment-dashboard-lead-partner'),
+      'the roster must drop the removed projection immediately');
+  });
+
   test('disable removes the materialized files and clears the state record; re-enable regenerates them', () => {
     const ws = useWorkspace({ agents: standardTeam() });
     lifecycle.installFromFolder(makeInvestmentishSource());

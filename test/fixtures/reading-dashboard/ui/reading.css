@@ -1,0 +1,3 @@
+[data-plugin-id="reading-dashboard"] { display: flex; flex-direction: column; gap: 10px; }
+[data-plugin-id="reading-dashboard"] h2 { margin: 0; }
+[data-plugin-id="reading-dashboard"] .reading-book-list { margin: 0; padding-left: 20px; }

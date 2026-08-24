@@ -75,6 +75,9 @@ function renderSettingsSection(section) {
           <button class="settings-btn" onclick="toggleTheme();renderSettingsSection('appearance')">${isLight ? 'Switch to Dark' : 'Switch to Light'}</button>
         </div>
       </div>`;
+  } else if (section === 'plugins') {
+    el.innerHTML = pluginsSettingsHtml();
+    if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: 'get_plugins' }));
   } else if (section === 'about') {
     el.innerHTML = `<div class="settings-section-title">About</div>
       <div class="settings-card">
@@ -156,5 +159,140 @@ function changeWorkspace() {
   ws.send(JSON.stringify({ type: 'list_workspaces' }));
 }
 
-return { showSettingsSection, renderSettingsSection, setWorkspaceMode, runtimeRowHtml, runtimesCardHtml, renderRuntimesCard, changeWorkspace };
+// ── Plugins card (settings › plugins) ──
+// The install form always takes a plain absolute path rather than only the
+// native folder-picker capability the spec describes: that dialog cannot be
+// driven by an automated test (Playwright cannot see or click into it), and
+// this codebase's Playwright suite is the acceptance gate for this feature.
+// A real desktop build can still wire a "Browse..." button to pick_folder
+// the same way workspace selection already does; this input works either way.
+let openPluginDisclosureId = null;
+
+function pluginStatusLabel(status) {
+  return { enabled: 'Enabled', disabled: 'Disabled', invalid: 'Invalid', approval_required: 'Package changed: needs re-approval' }[status] || status;
+}
+
+function pluginsSettingsHtml() {
+  const list = RundockPluginHost.allPlugins();
+  let h = `<div class="settings-section-title">Plugins</div>
+    <div class="settings-card flow">
+      <div class="settings-label" style="margin-bottom:10px">Install from folder</div>
+      <div class="card-actions">
+        <input id="plugin-install-path" class="settings-input" type="text" placeholder="/absolute/path/to/plugin" onkeydown="if(event.key==='Enter')installPluginFromPath()">
+        <button class="settings-btn-primary" onclick="installPluginFromPath()">Install</button>
+      </div>
+      <div class="settings-caption" id="plugin-install-error"></div>
+    </div>`;
+  if (list.length === 0) {
+    h += `<div class="settings-caption">No plugins installed.</div>`;
+  } else {
+    for (const p of list) h += pluginCardHtml(p);
+  }
+  return h;
+}
+
+function pluginCardHtml(p) {
+  let h = `<div class="settings-card flow" data-plugin-id="${escAttr(p.id)}">
+    <div class="card-actions" style="justify-content:space-between;align-items:flex-start">
+      <div>
+        <div class="settings-label">${esc(p.name || p.id)}${p.version ? ` <span class="settings-caption" style="display:inline">v${esc(p.version)}</span>` : ''}</div>
+        <div class="settings-caption">${esc(pluginStatusLabel(p.status))}</div>
+      </div>
+      <div class="card-actions">`;
+  if (p.status === 'enabled') {
+    h += `<button class="settings-btn" onclick="disablePluginAction('${escAttr(p.id)}')">Disable</button>`;
+  } else if (p.status === 'disabled' || p.status === 'approval_required') {
+    h += `<button class="settings-btn-primary" onclick="togglePluginDisclosure('${escAttr(p.id)}')">Review &amp; enable</button>`;
+  }
+  h += `<button class="settings-btn-danger" onclick="uninstallPluginAction('${escAttr(p.id)}')">Uninstall</button>
+      </div>
+    </div>`;
+  if (p.errors && p.errors.length) {
+    h += `<div class="settings-caption" style="color:var(--danger);margin-top:8px">${p.errors.map(e => esc(e.message)).join('<br>')}</div>`;
+  }
+  if (openPluginDisclosureId === p.id) h += pluginDisclosureHtml(p);
+  h += `</div>`;
+  return h;
+}
+
+// The spec's enable-confirmation disclosure: name/version/author/hash are
+// already in the card above it; this adds what is not (agents, skills,
+// resources, routes, and the same-origin UI warning) and asks for an
+// explicit second click rather than enabling from the list row directly.
+function pluginDisclosureHtml(p) {
+  const list = (items, empty) => items.length ? items.join(', ') : empty;
+  return `<div class="settings-card" style="margin:12px 0 0;background:var(--elevated)">
+    <div class="settings-row"><span class="settings-label">Author</span><span class="settings-value">${esc(p.author || 'Unknown')}</span></div>
+    <div class="settings-row"><span class="settings-label">Package hash</span><span class="settings-value">${esc(p.hash || 'unknown')}</span></div>
+    <div class="settings-row"><span class="settings-label">Agents</span><span class="settings-value">${esc(list((p.agents || []).map(a => a.slug), 'none'))}</span></div>
+    <div class="settings-row"><span class="settings-label">Skills</span><span class="settings-value">${esc(list((p.skills || []).map(s => s.slug), 'none'))}</span></div>
+    <div class="settings-row"><span class="settings-label">Data resources</span><span class="settings-value">${esc(list((p.resources || []).map(r => r.id), 'none'))}</span></div>
+    <div class="settings-row"><span class="settings-label">Routes</span><span class="settings-value">${esc(list((p.routes || []).map(r => r.label), 'none'))}</span></div>
+    <div class="settings-caption" style="padding:0 16px 14px">Approved UI code runs on this page with the same access Rundock has, and can read and modify what you see and communicate with this server as you. Agent and skill instructions can influence model behaviour and tool use. Data this plugin stores lives as plaintext JSON in your workspace; Rundock does not encrypt, transmit, trade, or back it up. Disabling the plugin later stops its code and agents but keeps its data.</div>
+    <div class="card-actions" style="padding:0 16px 14px">
+      <button class="settings-btn-primary" onclick="confirmEnablePlugin('${escAttr(p.id)}')">Confirm enable</button>
+      <button class="settings-btn" onclick="togglePluginDisclosure('${escAttr(p.id)}')">Cancel</button>
+    </div>
+  </div>`;
+}
+
+function togglePluginDisclosure(id) {
+  openPluginDisclosureId = openPluginDisclosureId === id ? null : id;
+  renderSettingsSection('plugins');
+}
+
+function installPluginFromPath() {
+  const input = document.getElementById('plugin-install-path');
+  const path = input ? input.value.trim() : '';
+  const errEl = document.getElementById('plugin-install-error');
+  if (errEl) errEl.textContent = '';
+  if (!path) return;
+  ws.send(JSON.stringify({ type: 'install_plugin', path }));
+}
+
+function confirmEnablePlugin(id) {
+  // Optimistic close: the 'plugins' broadcast that follows success redraws
+  // this card as enabled anyway, and closing now means a failure's error
+  // note (showPluginActionError) is not hidden behind a disclosure panel
+  // that no longer applies.
+  if (openPluginDisclosureId === id) openPluginDisclosureId = null;
+  ws.send(JSON.stringify({ type: 'enable_plugin', pluginId: id }));
+}
+
+function disablePluginAction(id) {
+  ws.send(JSON.stringify({ type: 'disable_plugin', pluginId: id }));
+}
+
+function uninstallPluginAction(id) {
+  ws.send(JSON.stringify({ type: 'uninstall_plugin', pluginId: id, deleteData: false }));
+}
+
+// Reflects a plugin_error reply into the install form's caption, or the
+// relevant card if the failed action named a pluginId already in the list.
+function showPluginActionError(action, pluginId, errors) {
+  const message = (errors && errors[0] && errors[0].message) || 'That action failed.';
+  if (action === 'install' || !pluginId) {
+    const errEl = document.getElementById('plugin-install-error');
+    if (errEl) errEl.textContent = message;
+    return;
+  }
+  const card = document.querySelector(`.settings-card[data-plugin-id="${CSS.escape(pluginId)}"]`);
+  if (card) {
+    let note = card.querySelector('.plugin-action-error');
+    if (!note) {
+      note = document.createElement('div');
+      note.className = 'settings-caption plugin-action-error';
+      note.style.color = 'var(--danger)';
+      note.style.marginTop = '8px';
+      card.appendChild(note);
+    }
+    note.textContent = message;
+  }
+}
+
+return {
+  showSettingsSection, renderSettingsSection, setWorkspaceMode, runtimeRowHtml, runtimesCardHtml, renderRuntimesCard, changeWorkspace,
+  pluginsSettingsHtml, pluginCardHtml, togglePluginDisclosure, installPluginFromPath, confirmEnablePlugin,
+  disablePluginAction, uninstallPluginAction, showPluginActionError,
+};
 }));

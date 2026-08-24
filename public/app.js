@@ -265,6 +265,10 @@ function handle(d) {
         pluginsLoadStartedForGeneration = RundockPluginHost.currentGeneration();
         RundockPluginHost.loadAllEnabledPlugins().then(() => RundockPluginHost.renderPluginNav(switchNav));
       }
+      if (currentView === 'settings' && document.getElementById('plugin-install-path')) renderSettingsSection('plugins');
+      break;
+    case 'plugin_error':
+      if (currentView === 'settings' && document.getElementById('plugin-install-path')) showPluginActionError(d.action, d.pluginId, d.errors);
       break;
     case 'plugin_data': case 'plugin_data_saved': case 'plugin_data_conflict': case 'plugin_data_error':
       RundockPluginHost.handleDataResponse(d);

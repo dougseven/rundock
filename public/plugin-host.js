@@ -215,6 +215,12 @@
     return Array.from(pluginsById.values()).filter(p => p.status === 'enabled');
   }
 
+  // Every known plugin regardless of status, for the Plugins settings view
+  // (which must show invalid and disabled packages too, per the spec).
+  function allPlugins() {
+    return Array.from(pluginsById.values());
+  }
+
   function pluginForRuntimeAgent(agent) {
     if (!agent || !agent.rundockPlugin) return null;
     return pluginsById.get(agent.rundockPlugin) || null;
@@ -457,7 +463,7 @@
   const api = {
     configure, currentGeneration, resetForWorkspace,
     register, subscribe, emit,
-    setPluginList, enabledPlugins, pluginForRuntimeAgent,
+    setPluginList, enabledPlugins, allPlugins, pluginForRuntimeAgent,
     loadPlugin, loadAllEnabledPlugins, renderPluginNav,
     mountRoute, unmountRoute, hideAllPluginPanels,
     updateChatSidePanel,

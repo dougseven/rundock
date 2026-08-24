@@ -21,6 +21,8 @@
    weight rather than a primary path with an escape hatch. */
 .settings-btn-danger { padding: 6px 14px; font-size: var(--caption); font-weight: 600; border-radius: var(--radius-md); background: var(--danger); color: white; border: none; transition: all var(--duration-base) ease; cursor: pointer; }
 .settings-btn-danger:hover { opacity: 0.9; }
+.settings-input { flex: 1; min-width: 0; padding: 6px 10px; font-size: var(--caption); font-family: 'SF Mono','Fira Code','Consolas',monospace; border-radius: var(--radius-md); background: var(--elevated); color: var(--text-1); border: 1px solid var(--border); }
+.settings-input:focus { outline: none; border-color: var(--accent); }
 /* The prose primitives a settings-shaped page needs: a lead paragraph, a
    quiet caption beneath a card, a row of actions inside one, and the padded
    variant of a card that holds prose rather than rows. */

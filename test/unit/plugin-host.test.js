@@ -212,6 +212,11 @@ describe('setPluginList / pluginForRuntimeAgent', () => {
     assert.deepStrictEqual(host.enabledPlugins().map(p => p.id), ['a']);
   });
 
+  test('allPlugins returns every known plugin regardless of status', () => {
+    host.setPluginList([samplePlugin({ id: 'a', status: 'enabled' }), samplePlugin({ id: 'b', status: 'invalid' })]);
+    assert.deepStrictEqual(host.allPlugins().map(p => p.id).sort(), ['a', 'b']);
+  });
+
   test('pluginForRuntimeAgent resolves an agent\'s owning plugin by rundockPlugin', () => {
     host.setPluginList([samplePlugin({ id: 'investment-dashboard' })]);
     const owner = host.pluginForRuntimeAgent({ rundockPlugin: 'investment-dashboard' });

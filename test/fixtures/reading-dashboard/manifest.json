@@ -1,0 +1,39 @@
+{
+  "schemaVersion": 1,
+  "id": "reading-dashboard",
+  "name": "Reading Dashboard",
+  "version": "1.0.0",
+  "description": "A minimal, deliberately non-investment plugin proving the framework has no domain-specific core code.",
+  "author": "Rundock",
+  "rundock": {
+    "minimumVersion": "0.11.8"
+  },
+  "ui": {
+    "entry": "ui/index.js",
+    "styles": ["ui/reading.css"]
+  },
+  "routes": [
+    {
+      "id": "library",
+      "path": "/reading",
+      "label": "Reading List",
+      "icon": "book",
+      "view": "library"
+    }
+  ],
+  "agents": [
+    {
+      "slug": "librarian",
+      "source": "agents/librarian.md",
+      "reportsTo": "$orchestrator"
+    }
+  ],
+  "resources": [
+    {
+      "id": "reading-list",
+      "file": "reading-list.json",
+      "template": "templates/reading-list.json",
+      "maximumBytes": 65536
+    }
+  ]
+}
