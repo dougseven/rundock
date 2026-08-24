@@ -1,0 +1,13 @@
+{
+  "schemaVersion": 1,
+  "revision": 0,
+  "updatedAt": "2026-08-24T00:00:00.000Z",
+  "constraints": {
+    "maximumSinglePositionFraction": 0.15,
+    "maximumSectorFraction": 0.30,
+    "minimumCashReserveFraction": 0.05
+  },
+  "taxPreferences": {
+    "preferTaxAdvantagedForDividends": true
+  }
+}
