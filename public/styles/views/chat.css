@@ -5,6 +5,11 @@
    The content INSIDE a bubble is components/message-content.css. */
 
 /* Chat */
+/* Groups header/messages/composer as their own column so #view-chat can be a
+   row flex container (plugin-host.css) with the optional chat-side-panel as
+   a second child, without the row direction reaching these three and laying
+   them out side by side instead of stacked. */
+.chat-main { display: flex; flex-direction: column; flex: 1; overflow: hidden; min-width: 0; }
 .chat-header { padding: 16px 24px; border-bottom: 1px solid var(--border); display: flex; align-items: center; gap: 12px; flex-shrink: 0; }
 .chat-back { display: flex; align-items: center; justify-content: center; width: 32px; height: 32px; border-radius: var(--radius-lg); color: var(--text-2); transition: all var(--duration-base) ease; flex-shrink: 0; cursor: pointer; }
 .chat-back:hover { color: var(--text-1); background: var(--card); }

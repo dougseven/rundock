@@ -226,21 +226,23 @@
     </div>
     <!-- Chat -->
     <div id="view-chat" class="hidden view-panel">
-      <div class="chat-header">
-        <div class="avatar sm" id="chat-agent-avatar"></div>
-        <div style="flex:1;min-width:0">
-          <input id="chat-title-input" class="chat-title-input" spellcheck="false" value="New conversation" onchange="renameConversation(this.value)">
-          <div style="font-size:var(--caption);color:var(--text-2);display:flex;align-items:center;gap:6px" id="chat-agent-row">
-            <span id="chat-agent-label"></span>
-            <span class="chat-status" id="chat-status"></span>
+      <div class="chat-main">
+        <div class="chat-header">
+          <div class="avatar sm" id="chat-agent-avatar"></div>
+          <div style="flex:1;min-width:0">
+            <input id="chat-title-input" class="chat-title-input" spellcheck="false" value="New conversation" onchange="renameConversation(this.value)">
+            <div style="font-size:var(--caption);color:var(--text-2);display:flex;align-items:center;gap:6px" id="chat-agent-row">
+              <span id="chat-agent-label"></span>
+              <span class="chat-status" id="chat-status"></span>
+            </div>
           </div>
+          <span class="chat-convo-status" id="chat-convo-status" onclick="toggleConvoStatus()"><span class="state-label">Active</span><span class="action-label">→ Archive</span></span>
         </div>
-        <span class="chat-convo-status" id="chat-convo-status" onclick="toggleConvoStatus()"><span class="state-label">Active</span><span class="action-label">→ Archive</span></span>
-      </div>
-      <div class="messages" id="messages"></div>
-      <div class="chat-input">
-        <textarea id="msg-input" placeholder="Message..." rows="1"></textarea>
-        <button class="send-btn" id="send-btn" onclick="sendMessage()" title="Send message"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="19" x2="12" y2="5"/><polyline points="5 12 12 5 19 12"/></svg></button>
+        <div class="messages" id="messages"></div>
+        <div class="chat-input">
+          <textarea id="msg-input" placeholder="Message..." rows="1"></textarea>
+          <button class="send-btn" id="send-btn" onclick="sendMessage()" title="Send message"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="19" x2="12" y2="5"/><polyline points="5 12 12 5 19 12"/></svg></button>
+        </div>
       </div>
     </div>
     <!-- Skills -->
