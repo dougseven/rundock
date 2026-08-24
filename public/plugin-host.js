@@ -282,8 +282,15 @@
     });
   }
 
+  // Idempotent per plugin id: skips anything already registered, already
+  // failed, or already in flight, so callers can safely re-run this on
+  // every 'plugins' message (a newly enabled plugin is the only one that
+  // is actually new work on a repeat call) without ever double-loading an
+  // already-mounted plugin's script.
   function loadAllEnabledPlugins() {
-    return Promise.all(enabledPlugins().map(entry => loadPlugin(entry)));
+    const toLoad = enabledPlugins().filter(entry =>
+      !registrations.has(entry.id) && !pluginErrors.has(entry.id) && !pendingLoads.has(entry.id));
+    return Promise.all(toLoad.map(entry => loadPlugin(entry)));
   }
 
   function pluginNavContainer() { return document.querySelector('.nav-main'); }
@@ -414,6 +421,7 @@
       try { current.unmount(); } catch (e) { console.error('[Plugins] chat-side-panel unmount threw:', e); }
       container.innerHTML = '';
       container.classList.add('hidden');
+      container.classList.remove('open');
     }
     if (eligible && !mounted.has(mountKey)) {
       const def = registrations.get(owningPlugin.id);
@@ -421,6 +429,11 @@
       const view = slot && def.slots && def.slots[slot.view];
       if (view) {
         container.classList.remove('hidden');
+        // On a narrow viewport the panel is a fixed overlay, translated
+        // off-screen by default (plugin-host.css); there is no separate
+        // trigger anywhere, so "eligible" must mean "visible" on narrow
+        // screens too, exactly as it already does on desktop.
+        container.classList.add('open');
         const context = buildContext(owningPlugin.id);
         try { view.mount(container, context); } catch (e) { console.error(`[Plugins] "${owningPlugin.id}" chat-side-panel mount threw:`, e); }
         mounted.set(mountKey, { pluginId: owningPlugin.id, unmount: () => view.unmount() });

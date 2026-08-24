@@ -1,0 +1,60 @@
+/* Investment Partner Hub: scoped entirely under [data-plugin-id], using
+   Rundock's own light/dark tokens (var(--text-1) etc.) rather than a
+   separate theme, per the spec. No colour, radius, or spacing here is a
+   plugin-owned palette decision; everything traces back to a host token. */
+
+[data-plugin-id="investment-dashboard"] { display: flex; flex-direction: column; gap: 16px; color: var(--text-1); font-size: 14px; }
+[data-plugin-id="investment-dashboard"] h1 { font-size: 20px; margin: 0; }
+[data-plugin-id="investment-dashboard"] h2 { font-size: 16px; margin: 0; }
+[data-plugin-id="investment-dashboard"] h3 { font-size: 14px; margin: 0 0 10px; }
+
+.inv-root { padding: 16px; }
+.inv-header { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+.inv-loading, .inv-empty { color: var(--text-2); }
+.inv-error { color: var(--danger); margin-bottom: 8px; }
+.inv-caption { color: var(--text-2); font-size: 12px; margin-top: 8px; }
+
+.inv-tabs { display: flex; gap: 4px; border-bottom: 1px solid var(--border); }
+.inv-tab { padding: 8px 12px; color: var(--text-2); border-bottom: 2px solid transparent; cursor: pointer; background: none; border-left: none; border-right: none; border-top: none; font: inherit; }
+.inv-tab:hover { color: var(--text-1); }
+.inv-tab.active { color: var(--accent); border-bottom-color: var(--accent); }
+
+.inv-card { background: var(--card); border-radius: var(--radius-lg); padding: 14px 16px; }
+
+.inv-btn { padding: 6px 14px; font-size: 12px; font-weight: 600; border-radius: var(--radius-md); background: var(--card); color: var(--text-1); border: 1px solid var(--border); cursor: pointer; }
+.inv-btn:hover { border-color: var(--accent); color: var(--accent); }
+.inv-btn-primary { background: var(--accent); color: white; border: none; }
+.inv-btn-primary:hover { background: var(--accent-hover); }
+
+.inv-indicator { margin-bottom: 10px; }
+.inv-indicator-label { display: flex; justify-content: space-between; font-size: 12px; margin-bottom: 4px; }
+.inv-indicator-value { color: var(--text-2); }
+.inv-indicator-value.inv-over { color: var(--danger); font-weight: 600; }
+.inv-indicator-track { position: relative; height: 8px; border-radius: var(--radius-pill); background: var(--elevated); overflow: hidden; }
+.inv-indicator-fill { position: absolute; inset: 0; width: 0; background: var(--accent); border-radius: var(--radius-pill); }
+.inv-indicator-fill.inv-over { background: var(--danger); }
+.inv-indicator-limit { position: absolute; top: -2px; bottom: -2px; width: 2px; background: var(--text-1); }
+
+.inv-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.inv-table th { text-align: left; color: var(--text-2); font-weight: 500; font-size: 12px; padding: 6px 8px; border-bottom: 1px solid var(--border); }
+.inv-table td { padding: 6px 8px; border-bottom: 1px solid var(--border); }
+.inv-table tr.inv-stale td { color: var(--attention); }
+.inv-badge { font-size: 11px; padding: 1px 6px; border-radius: var(--radius-pill); background: var(--attention); color: white; }
+.inv-input { width: 90px; padding: 4px 6px; border-radius: var(--radius-sm); background: var(--elevated); color: var(--text-1); border: 1px solid var(--border); font: inherit; }
+.inv-input:focus { outline: none; border-color: var(--accent); }
+
+.inv-field { margin-bottom: 14px; }
+.inv-field label { display: block; font-size: 13px; margin-bottom: 6px; }
+.inv-field-row { display: flex; align-items: center; gap: 10px; }
+.inv-field-row input[type="range"] { flex: 1; }
+.inv-field-value { min-width: 46px; text-align: right; color: var(--text-2); font-size: 12px; }
+
+.inv-journal-board { display: grid; grid-template-columns: repeat(5, minmax(160px, 1fr)); gap: 12px; overflow-x: auto; }
+.inv-journal-column { background: var(--elevated); border-radius: var(--radius-lg); padding: 10px; min-width: 160px; }
+.inv-journal-card { background: var(--card); border-radius: var(--radius-md); padding: 8px; margin-bottom: 8px; }
+.inv-journal-card-title { font-weight: 600; font-size: 12px; }
+.inv-journal-card-thesis { color: var(--text-2); font-size: 12px; margin: 4px 0; }
+.inv-journal-status-label { font-size: 11px; color: var(--text-2); display: block; }
+.inv-journal-status { width: 100%; margin-top: 2px; padding: 3px 4px; border-radius: var(--radius-sm); background: var(--elevated); color: var(--text-1); border: 1px solid var(--border); font: inherit; }
+
+.inv-side-panel { padding: 4px; }

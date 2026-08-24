@@ -25,6 +25,14 @@ function showSettingsSection(section) {
   document.querySelectorAll('.settings-nav-item').forEach(el => el.classList.remove('active'));
   document.querySelector(`.settings-nav-item[data-settings="${section}"]`)?.classList.add('active');
   renderSettingsSection(section);
+  // Fetched here, on actual navigation into the section, and NOWHERE inside
+  // renderSettingsSection itself: the 'plugins' reply this triggers re-runs
+  // renderSettingsSection('plugins') too (see app.js's message handler), and
+  // a fetch inside the render function would re-request on every one of
+  // those replies forever, wiping whatever the user had just typed into the
+  // install-path field on every cycle. Real bug, caught by hand-testing in
+  // a browser, not by any test in the suite.
+  if (section === 'plugins' && ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: 'get_plugins' }));
 }
 
 function renderSettingsSection(section) {
@@ -77,7 +85,6 @@ function renderSettingsSection(section) {
       </div>`;
   } else if (section === 'plugins') {
     el.innerHTML = pluginsSettingsHtml();
-    if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: 'get_plugins' }));
   } else if (section === 'about') {
     el.innerHTML = `<div class="settings-section-title">About</div>
       <div class="settings-card">

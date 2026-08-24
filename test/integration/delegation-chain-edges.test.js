@@ -13,6 +13,11 @@
 //   cos --(WS delegate, parked alive)--> content-lead
 //       --(intercepted Agent call, lead killed)--> content-analyst
 // The sub-delegate's handback then always finds the living orchestrator.
+//
+// Skip-to-orchestrator is narrow to RETURN (out-of-scope) only: see
+// plugin-investment-dashboard's two-level reportsTo chain, which requires a
+// sub-delegate's COMPLETE to restore the IMMEDIATE parent (content-lead),
+// not the top orchestrator, so the parent can continue its own pipeline.
 const { test, before, after } = require('node:test');
 const assert = require('node:assert');
 const h = require('../helpers/harness.js');
@@ -33,14 +38,23 @@ async function startOrchestrator(convoId, keyword) {
   await client.waitForEvent('system', 'done', convoId);
 }
 
-test('COMPLETE from a sub-delegate skips the mid-level parent and parks the living orchestrator', async () => {
+test('COMPLETE from a sub-delegate restores the IMMEDIATE parent via --resume, not the orchestrator', async () => {
   const convoId = h.freshConvoId('skipc');
   await startOrchestrator(convoId, 'skipc-setup');
+  // This test's whole point is that the orchestrator's process is parked
+  // alive and never restored (that would make it the map entry reapConvo
+  // reaches at the end). It must be captured now and killed explicitly at
+  // teardown, or its real child process leaks past the test.
+  const orchestratorEntry = h.internal.chatProcesses.get(convoId);
   h.writeScenario([
     { match: { agent: 'content-lead', promptIncludes: 'skipc task' },
       turn: [{ agentTool: { subagent_type: 'content-analyst', prompt: 'skipc sub brief' } }] },
     { match: { agent: 'content-analyst', promptIncludes: 'skipc sub brief' },
       turn: [{ text: 'SUB-COMPLETE-OUT delivered. <!-- RUNDOCK:COMPLETE -->' }] },
+    // The resumed IMMEDIATE parent (content-lead, not the orchestrator) must
+    // receive the pipeline-complete prompt carrying the sub-delegate's output.
+    { match: { agent: 'content-lead', promptIncludes: ['[SYSTEM: pipeline-complete]', 'SUB-COMPLETE-OUT'], promptExcludes: 'RUNDOCK:COMPLETE' },
+      turn: [{ text: '<silent>' }] },
   ]);
 
   const since = client.messages.length;
@@ -50,24 +64,27 @@ test('COMPLETE from a sub-delegate skips the mid-level parent and parks the livi
   await client.waitFor(m => m.type === 'system' && m.subtype === 'agent_switch' && m._conversationId === convoId && m.toAgent === 'content-analyst', { since, label: 'switch to sub-delegate' });
   const { index: subResultIdx } = await client.waitFor(m => m.type === 'result' && m._conversationId === convoId && m._agent === 'content-analyst', { since, label: 'sub-delegate result' });
 
-  // Skip-level restore: the switch goes STRAIGHT from the sub-delegate to
-  // the orchestrator; the mid-level lead is never restored.
-  const { msg: swBack } = await client.waitFor(m => m.type === 'system' && m.subtype === 'agent_switch' && m._conversationId === convoId && m.toAgent === 'chief-of-staff', { since: subResultIdx, label: 'skip-level switch back' });
-  assert.strictEqual(swBack.fromAgent, 'content-analyst', 'handback skips the mid-level parent');
-  await client.waitFor(m => m.type === 'system' && m.subtype === 'done' && m._conversationId === convoId, { since: subResultIdx, label: 'done after skip-level handback' });
+  // Immediate-parent restore: the switch goes back to content-lead, NOT the
+  // orchestrator, which is a spec requirement for two-level delegation.
+  const { msg: swBack } = await client.waitFor(m => m.type === 'system' && m.subtype === 'agent_switch' && m._conversationId === convoId && m.toAgent === 'content-lead', { since: subResultIdx, label: 'immediate-parent switch back' });
+  assert.strictEqual(swBack.fromAgent, 'content-analyst');
 
-  const leadRestart = client.messages.slice(subResultIdx).find(
-    m => m.type === 'system' && m.subtype === 'process_started' && m._conversationId === convoId && m._agent === 'content-lead');
-  assert.ok(!leadRestart, 'the mid-level lead is skipped, never respawned');
+  const { msg: started, index: startedIdx } = await client.waitFor(m => m.type === 'system' && m.subtype === 'process_started' && m._conversationId === convoId && m._agent === 'content-lead' && m.autoContinue, { since: subResultIdx, label: 'lead restart' });
+  assert.strictEqual(started.silent, true, 'pipeline-complete restart of the immediate parent is silent');
 
-  // COMPLETE gate: the orchestrator entry is the parked ORIGINAL (alive the
-  // whole time by construction), left idle with no auto-resume.
+  const orchestratorSwitch = client.messages.slice(subResultIdx).find(
+    m => m.type === 'system' && m.subtype === 'agent_switch' && m._conversationId === convoId && m.toAgent === 'chief-of-staff');
+  assert.ok(!orchestratorSwitch, 'the orchestrator is never surfaced mid-pipeline on a COMPLETE handback');
+
+  await client.waitFor(m => m.type === 'result' && m._conversationId === convoId && m._agent === 'content-lead', { since: startedIdx + 1, label: 'resumed lead result' });
+
+  // The resumed content-lead entry is what's live now, parked idle for the
+  // user; the orchestrator was never touched by this handback.
   const entry = h.internal.chatProcesses.get(convoId);
-  assert.strictEqual(entry.agentId, 'chief-of-staff');
-  assert.strictEqual(entry.exited, false, 'the orchestrator was alive throughout: parked, never killed');
-  assert.strictEqual(entry.idle, true, 'COMPLETE leaves the orchestrator idle for the user');
-  assert.strictEqual(entry.delegation, null, 'delegation state cleared');
+  assert.strictEqual(entry.agentId, 'content-lead');
+  assert.strictEqual(entry.idle, true, 'the resumed lead parks idle after the silent pipeline-complete turn');
   h.reapConvo(convoId);
+  try { orchestratorEntry.process.kill('SIGKILL'); } catch (e) {}
 });
 
 test('RETURN from a sub-delegate auto-continues the living orchestrator with the routing prompt', async () => {

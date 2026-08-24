@@ -128,6 +128,40 @@ describe('resetForWorkspace', () => {
   });
 });
 
+describe('loadAllEnabledPlugins', () => {
+  test('re-running it does not create a second script tag for an already-registered plugin', () => {
+    host.setPluginList([samplePlugin()]);
+    host.loadAllEnabledPlugins();
+    assert.strictEqual(document.head.querySelectorAll('script[data-rundock-plugin="plugin-a"]').length, 1);
+
+    // Simulate that first script's own synchronous top-level run.
+    setCurrentScript({ rundockPlugin: 'plugin-a', rundockGeneration: String(host.currentGeneration()) });
+    host.register('plugin-a', { routes: { home: { mount: () => {}, unmount: () => {} } } });
+    setCurrentScript(null);
+
+    // A later 'plugins' broadcast (e.g. an unrelated plugin's lifecycle
+    // change) re-runs loadAllEnabledPlugins; it must not double-load a
+    // plugin id that already registered.
+    host.loadAllEnabledPlugins();
+    assert.strictEqual(document.head.querySelectorAll('script[data-rundock-plugin="plugin-a"]').length, 1);
+  });
+
+  test('loads a plugin that was enabled after an earlier call already ran', () => {
+    host.setPluginList([samplePlugin({ status: 'disabled' })]);
+    host.loadAllEnabledPlugins();
+    assert.strictEqual(document.head.querySelectorAll('script[data-rundock-plugin]').length, 0);
+
+    host.setPluginList([samplePlugin({ status: 'enabled' })]);
+    host.loadAllEnabledPlugins();
+    assert.strictEqual(document.head.querySelectorAll('script[data-rundock-plugin="plugin-a"]').length, 1);
+
+    // Settle the pending load so its 8s timeout doesn't outlive the test.
+    setCurrentScript({ rundockPlugin: 'plugin-a', rundockGeneration: String(host.currentGeneration()) });
+    host.register('plugin-a', { routes: { home: { mount: () => {}, unmount: () => {} } } });
+    setCurrentScript(null);
+  });
+});
+
 describe('generation handling for late responses', () => {
   test('a plugin_data reply carrying a stale requestId resolves nothing and does not throw', () => {
     let sent = null;

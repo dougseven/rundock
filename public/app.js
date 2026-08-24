@@ -58,10 +58,6 @@ const moonIcon = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" str
 
 let ws=null, agents=[], conversations=[], activeConversation=null, currentView='home', currentFilePath=null, skills=[], skillsLoaded=false, currentWorkspacePath=null, workspaceAnalysis=null, workspaceIsEmpty=false, workspaceMode='knowledge', setupComplete=true, conversationsLoaded=false, activeSidebarPill='all', convoLists=[];
 let runtimeStatus = null; // { defaultRuntime, claude: {installed, authenticated, version}, codex: {...} }
-// Which RundockPluginHost generation plugin UI has already been LOADED for.
-// -1 never matches a real generation, so the first 'plugins' message of any
-// session always triggers a load.
-let pluginsLoadStartedForGeneration = -1;
 const agentLastActivity = {}; // { agentId: { time: Date, label: string } }
 // Per-conversation state: { convoId: { isProcessing, currentStreamingMsg, latestText } }
 const convoState = {};
@@ -254,17 +250,16 @@ function handle(d) {
     case 'needs_workspace': showView('workspace'); break;
     case 'agents': agents=d.agents; renderAgentList(); renderOrgChart(); renderRoutinesSidebar(); renderRoutines(); renderConvoList(); break;
     // The plugin list can arrive more than once per workspace (any lifecycle
-    // mutation from any client re-broadcasts it), but plugin UI is only ever
-    // LOADED once per workspace generation: hot-reloading an already-mounted
-    // plugin is out of scope for v1. The generation guard is what makes a
-    // second, later 'plugins' message update settings-relevant metadata
-    // without re-triggering script loads.
+    // mutation from any client re-broadcasts it, including enabling a plugin
+    // that was disabled when this workspace generation first loaded).
+    // loadAllEnabledPlugins only loads a plugin id that isn't already
+    // registered/loading, so re-running it on every message is safe and is
+    // what lets a freshly-enabled plugin appear without a workspace reload.
+    // Hot-reloading an already-mounted plugin's code is still out of scope
+    // for v1: a registered plugin id is never loaded a second time.
     case 'plugins':
       RundockPluginHost.setPluginList(d.plugins);
-      if (pluginsLoadStartedForGeneration !== RundockPluginHost.currentGeneration()) {
-        pluginsLoadStartedForGeneration = RundockPluginHost.currentGeneration();
-        RundockPluginHost.loadAllEnabledPlugins().then(() => RundockPluginHost.renderPluginNav(switchNav));
-      }
+      RundockPluginHost.loadAllEnabledPlugins().then(() => RundockPluginHost.renderPluginNav(switchNav));
       if (currentView === 'settings' && document.getElementById('plugin-install-path')) renderSettingsSection('plugins');
       break;
     case 'plugin_error':
