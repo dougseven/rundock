@@ -73,6 +73,12 @@
       "1.6s": 1
     }
   },
+  "public/styles/components/plugin-host.css": {
+    "why": "Shadow black on the narrow-screen chat-side-panel drawer, matching the elevation shadows every other overlay/menu in this codebase picks its own alpha for (see sidebar.css, palette.css). Waiting on the same shadow scale in tokens.css those are waiting on.",
+    "allow": {
+      "rgba(0,0,0,0.25)": 1
+    }
+  },
   "public/styles/components/sidebar.css": {
     "why": "Shadow blacks. There is no elevation scale, so every surface picked its own alpha. Waiting on a shadow scale in tokens.css. Plus two absolute whites, accent and success tints, a 10px radius, and two 2s status animations. Absolute white or black, chosen for contrast against a coloured fill rather than as a theme colour. Deliberate: a token here would make it follow the theme, which is the opposite of what it is for.",
     "allow": {

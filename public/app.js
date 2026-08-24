@@ -58,6 +58,10 @@ const moonIcon = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" str
 
 let ws=null, agents=[], conversations=[], activeConversation=null, currentView='home', currentFilePath=null, skills=[], skillsLoaded=false, currentWorkspacePath=null, workspaceAnalysis=null, workspaceIsEmpty=false, workspaceMode='knowledge', setupComplete=true, conversationsLoaded=false, activeSidebarPill='all', convoLists=[];
 let runtimeStatus = null; // { defaultRuntime, claude: {installed, authenticated, version}, codex: {...} }
+// Which RundockPluginHost generation plugin UI has already been LOADED for.
+// -1 never matches a real generation, so the first 'plugins' message of any
+// session always triggers a load.
+let pluginsLoadStartedForGeneration = -1;
 const agentLastActivity = {}; // { agentId: { time: Date, label: string } }
 // Per-conversation state: { convoId: { isProcessing, currentStreamingMsg, latestText } }
 const convoState = {};
@@ -249,6 +253,23 @@ function handle(d) {
       break;
     case 'needs_workspace': showView('workspace'); break;
     case 'agents': agents=d.agents; renderAgentList(); renderOrgChart(); renderRoutinesSidebar(); renderRoutines(); renderConvoList(); break;
+    // The plugin list can arrive more than once per workspace (any lifecycle
+    // mutation from any client re-broadcasts it), but plugin UI is only ever
+    // LOADED once per workspace generation: hot-reloading an already-mounted
+    // plugin is out of scope for v1. The generation guard is what makes a
+    // second, later 'plugins' message update settings-relevant metadata
+    // without re-triggering script loads.
+    case 'plugins':
+      RundockPluginHost.setPluginList(d.plugins);
+      if (pluginsLoadStartedForGeneration !== RundockPluginHost.currentGeneration()) {
+        pluginsLoadStartedForGeneration = RundockPluginHost.currentGeneration();
+        RundockPluginHost.loadAllEnabledPlugins().then(() => RundockPluginHost.renderPluginNav(switchNav));
+      }
+      break;
+    case 'plugin_data': case 'plugin_data_saved': case 'plugin_data_conflict': case 'plugin_data_error':
+      RundockPluginHost.handleDataResponse(d);
+      break;
+    case 'plugin_data_changed': RundockPluginHost.handleDataChanged(d); break;
     // renderRoutines as well as renderSkills: the routines empty state asks
     // whether the workspace has a skill, so the reply that answers that
     // question is the reply that has to redraw it. Without this the list sits
@@ -365,6 +386,8 @@ function handle(d) {
         });
         convoState[convoId] = r.state;
         executeEffects(convoId, r.effects);
+        RundockPluginHost.notifyAgentSwitch({ conversationId: convoId, agentId: d.toAgent });
+        if (activeConversation?.id === convoId) RundockPluginHost.updateChatSidePanel(toAgent);
       }
       if(d.subtype==='delegation_error' && convoId) {
         addSystemMsgToConvo(d.content || 'Delegation failed', convoId, true);
@@ -1005,6 +1028,24 @@ function switchNav(nav) {
   // and search state don't survive into a context where they no longer make
   // sense or reference DOM that's about to be replaced.
   closeFindBar();
+  // Plugin routes (nav key "plugin:<id>:<routeId>") never had a
+  // sidebar-<nav> panel to begin with, unlike every built-in nav value
+  // setNavState assumes: they take their own path instead of running
+  // through it. The host owns showing the route's own stable panel and
+  // hiding every other one, mount/unmount, and its context.
+  if (nav.startsWith('plugin:')) {
+    document.querySelectorAll('.nav-item[data-nav]').forEach(n=>n.classList.remove('active'));
+    document.querySelector(`[data-nav="${nav}"]`)?.classList.add('active');
+    ['team','conversations','skills','files','settings'].forEach(s=>document.getElementById(`sidebar-${s}`)?.classList.add('hidden'));
+    document.getElementById('convo-footer')?.classList.add('hidden');
+    // Hide every BUILT-IN view (mountRoute below hides other plugin panels
+    // itself, but knows nothing about these): the same fixed set showView
+    // hides, so a plugin route replaces whichever built-in view was showing.
+    ['workspace','home','profile','chat','convo-empty','editor','skills','settings','routine-editor','routines'].forEach(id=>{const e=document.getElementById(`view-${id}`);if(e){e.classList.add('hidden');e.style.display='none';}});
+    currentView = nav;
+    RundockPluginHost.mountRoute(nav);
+    return;
+  }
   setNavState(nav);
   if(nav==='settings') { showView('settings'); showSettingsSection('workspace'); }
   else if(nav==='files') {
@@ -1040,7 +1081,7 @@ function switchNav(nav) {
   else if(nav==='team') { showView('home'); renderOrgChart(); }
   else if(nav==='routines') { showView('routines'); renderRoutines(); }
 }
-function showView(v) { currentView=v; ['workspace','home','profile','chat','convo-empty','editor','skills','settings','routine-editor','routines'].forEach(id=>{const e=document.getElementById(`view-${id}`);if(e){e.classList.add('hidden');e.style.display='none';e.classList.remove('main-view-transition');}}); const e=document.getElementById(`view-${v}`); if(e){e.classList.remove('hidden');e.style.display='flex';e.classList.add('main-view-transition');}  }
+function showView(v) { currentView=v; if (typeof RundockPluginHost !== 'undefined') RundockPluginHost.hideAllPluginPanels(); ['workspace','home','profile','chat','convo-empty','editor','skills','settings','routine-editor','routines'].forEach(id=>{const e=document.getElementById(`view-${id}`);if(e){e.classList.add('hidden');e.style.display='none';e.classList.remove('main-view-transition');}}); const e=document.getElementById(`view-${v}`); if(e){e.classList.remove('hidden');e.style.display='flex';e.classList.add('main-view-transition');}  }
 function goHome() { discardIfEmpty(); activeConversation=null; switchNav('conversations'); }
 
 // Theme. One function applies it everywhere it shows (body class, toggle
@@ -1053,6 +1094,7 @@ function applyTheme(isLight) {
   if (t) t.innerHTML = isLight ? moonIcon : sunIcon;
   if (typeof applyHljsTheme === 'function') applyHljsTheme(isLight);
   syncTitleBarOverlay(isLight);
+  RundockPluginHost.notifyThemeChanged(isLight ? 'light' : 'dark');
 }
 function toggleTheme() {
   const isLight = !document.body.classList.contains('light');
@@ -1307,6 +1349,12 @@ function onWorkspaceReady(dir, analysis, isEmpty, mode, scaffoldError, isSetupCo
   if (scaffoldError) {
     console.warn('[Workspace] Scaffold error:', scaffoldError);
   }
+  // A workspace SWITCH (never a mere reconnect to the same one) tears down
+  // every mounted plugin route/slot, removes their generated DOM, and bumps
+  // the generation token BEFORE the new workspace's plugin list is
+  // requested below, so a late script/protocol response from the one just
+  // left cannot be mistaken for this one's.
+  if (!isSameWorkspace) RundockPluginHost.resetForWorkspace();
   // Show nav and sidebar
   document.querySelector('.nav-rail').style.display = '';
   document.querySelector('.sidebar').style.display = '';
@@ -1320,6 +1368,7 @@ function onWorkspaceReady(dir, analysis, isEmpty, mode, scaffoldError, isSetupCo
   ws.send(JSON.stringify({ type: 'get_conversations' }));
   ws.send(JSON.stringify({ type: 'get_lists' }));
   ws.send(JSON.stringify({ type: 'get_runtime_status' }));
+  ws.send(JSON.stringify({ type: 'get_plugins' }));
   skillsLoaded = false;
   currentSkillId = null;
 
@@ -1648,6 +1697,31 @@ document.getElementById('palette-input')?.addEventListener('keydown', (e) => {
   if (e.key === 'ArrowDown') { e.preventDefault(); movePaletteSelection(1); }
   else if (e.key === 'ArrowUp') { e.preventDefault(); movePaletteSelection(-1); }
   else if (e.key === 'Enter') { e.preventDefault(); openPaletteResult(paletteSel); }
+});
+
+// Resolves a plugin-local agent slug to its materialized runtime id
+// (rundock-plugin-<pluginId>-<slug>, the same formula lib/plugins/manifest.js's
+// deriveRuntimeSlug uses server-side) and starts a conversation with it,
+// matching the host context's startConversation(agentSlug, initialMessage).
+// A given initialMessage is placed in the composer rather than sent
+// automatically: the user still presses Send, so a plugin-initiated
+// conversation is never actually dispatched without the user seeing it first.
+function pluginStartConversation(pluginId, agentSlug, initialMessage) {
+  const runtimeId = `rundock-plugin-${pluginId}-${agentSlug}`;
+  const agent = agents.find(a => a.id === runtimeId);
+  if (!agent) { console.warn(`[Plugins] "${pluginId}" tried to start a conversation with unknown agent "${agentSlug}".`); return; }
+  startConversation(runtimeId);
+  if (initialMessage) {
+    const input = document.getElementById('msg-input');
+    if (input) { input.value = initialMessage; input.focus(); }
+  }
+}
+
+RundockPluginHost.configure({
+  send: (m) => ws.send(JSON.stringify(m)),
+  escapeHtml: esc,
+  navigate: switchNav,
+  startConversation: pluginStartConversation,
 });
 
 connect();

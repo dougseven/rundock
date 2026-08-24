@@ -1,0 +1,27 @@
+/* Plugin host chrome: generated nav buttons, the one stable panel per
+   plugin route (public/plugin-host.js's mountRoute), and the chat-side-panel
+   slot. Plugin UI content itself is scoped under [data-plugin-id] by each
+   plugin's own stylesheet; this file only styles what the shell itself
+   draws around that content. */
+
+/* Generated route nav buttons reuse .nav-item (nav-rail.css) for hover,
+   active and tooltip behaviour; they carry no SVG, so the icon slot is a
+   single glyph instead. */
+.nav-item[data-rundock-plugin] { font-size: var(--body); font-weight: 600; }
+
+.plugin-view-panel { padding: 24px; }
+
+/* Desktop: a fixed-width column beside the chat, its own scroll region so a
+   tall plugin view never pushes the chat input off-screen. Narrow screens
+   (see the drawer rule below) turn it into an overlay instead of shrinking
+   the chat pane below a usable width. */
+.plugin-chat-side-panel { width: 320px; flex: 0 0 320px; border-left: 1px solid var(--border); background: var(--surface); overflow-y: auto; padding: 16px; }
+.plugin-chat-side-panel.hidden { display: none; }
+
+#view-chat { flex-direction: row; }
+#view-chat > .plugin-chat-side-panel { order: 2; }
+
+@media (max-width: 860px) {
+  .plugin-chat-side-panel { position: fixed; top: 0; right: 0; bottom: 0; width: min(320px, 85vw); flex: none; z-index: 50; box-shadow: -4px 0 16px rgba(0,0,0,0.25); transform: translateX(100%); transition: transform var(--duration-slow) ease; }
+  .plugin-chat-side-panel.open { transform: translateX(0); }
+}

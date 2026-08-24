@@ -141,6 +141,7 @@ function createConversation(agentId, title) {
   const convo = { id: Date.now().toString(), agentId: agent.id, agent, title: title || `Chat with ${agent.displayName}`, messages: [], status: 'active', createdAt: new Date().toISOString() };
   conversations.unshift(convo);
   activeConversation = convo;
+  RundockPluginHost.updateChatSidePanel(agent);
   // Don't persist yet: conversation is saved on first message send (lazy creation)
   renderConvoList();
   setupChat(convo);
@@ -760,6 +761,10 @@ function openConversation(id, withAnchor) {
   if (activeConversation && activeConversation.id !== id) closeFindBar();
   if (activeConversation && activeConversation.id !== id) discardIfEmpty();
   activeConversation=c;
+  // The chat-side-panel slot is eligible only while the ACTIVE or
+  // originating agent belongs to a plugin: opening a conversation is a
+  // "switch" onto its own starting agent as far as that eligibility goes.
+  RundockPluginHost.updateChatSidePanel(c.agent);
   persistLastActiveConversation(id);
   unread.clearConvo(id);
   updateUnreadBadge();
