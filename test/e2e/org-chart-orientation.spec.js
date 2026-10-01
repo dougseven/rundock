@@ -595,8 +595,18 @@ for (const orientation of ['vertical', 'horizontal']) {
         section: r(document.querySelector('.org-platform-section')),
         label: r(document.querySelector('.org-platform-label')),
         platformCards: [...document.querySelectorAll('.org-platform-section .org-card')].map(r),
+        chart: r(document.querySelector('.org-chart')),
+        // True when the chart needs scrolling to reach everything in it.
+        scrolls: (() => { const c = document.querySelector('.org-chart'); return c.scrollHeight > c.clientHeight + 1 || c.scrollWidth > c.clientWidth + 1; })(),
       };
     });
+
+    // At the fitted size the whole chart, platform row included, is on screen
+    // without scrolling. This is what pins the room reserved for the row: if
+    // the reserve fell short of the row's real height, the row would fall
+    // below the fold and the chart would scroll.
+    expect(rects.scrolls, 'chart needs no scrolling at fit').toBe(false);
+    expect(rects.section.bottom, 'platform row is inside the chart').toBeLessThanOrEqual(rects.chart.bottom + 0.5);
 
     const lowestCard = Math.max(...rects.cards.map((c) => c.bottom));
     expect(rects.label.top, 'label below the lowest chart card').toBeGreaterThanOrEqual(lowestCard - 0.5);
@@ -606,6 +616,60 @@ for (const orientation of ['vertical', 'horizontal']) {
       for (const pc of rects.platformCards) expect(overlaps(c, pc), 'chart card overlaps a platform card').toBe(false);
     }
   });
+}
+
+// ── agents with no resolvable parent ─────────────────────────────────────────
+
+// An agent whose reportsTo names someone who is not on the team (here the
+// platform guide) has nothing to hang from, so it joins the leader at the top
+// level. Both then sit in the first column or row, and the leader's own reports
+// sit one level further out. The second roster is compact, which is where the
+// leader's taller card shares a column with other cards.
+const LOST = member('lost', 'Lost', 99, 'doc');
+const ORPHAN_ROSTERS = [
+  ['a small team', [
+    member('boss', 'Boss', 0),
+    member('a1', 'KidA', 1, 'boss'),
+    member('a2', 'KidB', 2, 'boss'),
+    LOST,
+  ]],
+  ['a compact team', [...WIDE, LOST]],
+];
+
+for (const orientation of ['vertical', 'horizontal']) {
+  for (const [label, roster] of ORPHAN_ROSTERS) {
+    test(`an agent with no resolvable parent shares the leader's level in ${orientation} layout for ${label}`, async ({ page }) => {
+      const errors = trackPageErrors(page);
+      await mount(page, [...roster, PLATFORM_AGENT]);
+      await setOrientation(page, orientation);
+      const { cards, paths } = await measure(page);
+      const kids = roster.filter((a) => a.reportsTo === 'boss').map((a) => a.displayName);
+
+      expect(Object.keys(cards).sort()).toEqual(roster.map((a) => a.displayName).sort());
+
+      // Same level: one row in Vertical, one column in Horizontal.
+      if (orientation === 'vertical') {
+        expect(Math.abs(cards.Lost.top - cards.Boss.top), 'Lost and Boss share a row').toBeLessThanOrEqual(TOL);
+      } else {
+        expect(Math.abs(cards.Lost.cx - cards.Boss.cx), 'Lost and Boss share a column').toBeLessThanOrEqual(TOL);
+      }
+
+      // The leader's reports are one level further out than the leader.
+      for (const kid of kids) {
+        if (orientation === 'vertical') {
+          expect(cards.Boss.bottom, `Boss above ${kid}`).toBeLessThanOrEqual(cards[kid].top + 0.5);
+        } else {
+          expect(cards[kid].cx, `${kid} right of Boss`).toBeGreaterThan(cards.Boss.cx + TOL);
+        }
+      }
+
+      expectNoOverlap(cards);
+
+      // Only the leader's links are drawn: the orphan has no parent to join.
+      expect(paths).toHaveLength(kids.length);
+      expect(errors).toEqual([]);
+    });
+  }
 }
 
 // ── empty and single-leader cases ────────────────────────────────────────────
