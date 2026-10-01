@@ -8,6 +8,16 @@ All notable changes to Rundock are documented here. Format follows [Keep a Chang
 
 **Name:** Packages On Windows
 
+The team chart can now be turned on its side, with smooth curved lines between agents, and packages install on Windows again. A button in the zoom controls switches between the top-down chart and a left-to-right one, and Rundock remembers your choice.
+
+### Added
+
+- **Turn the team chart on its side:** the rotate button under the zoom controls puts the orchestrator on the left and each level of reports in a column to its right, which suits a deep team or a tall window. Switching fits the chart to the window again and clears any zoom. The choice is kept between sessions, the Rundock Agents row stays below the chart, and the button is only shown when there is a team.
+
+### Changed
+
+- **Curved lines on the team chart:** each link from an agent to the person it reports to is now a single curve, where it was a trunk, a bar and a drop of right-angled lines.
+
 ### Fixed
 
 - **Packages install on Windows:** adding a package from a GitHub link failed every time on Windows with a raw permission error (`EPERM`). Git marks some of the files it downloads as read-only, and Windows wouldn't let Rundock delete them when it tidied up after the download; the clean-up after that failed the same way and hid the real reason the install stopped. Rundock now makes the downloaded files writable before removing them and tries again if one is briefly in use. If a clean-up still fails, Rundock notes it and carries on, so an install that worked is never failed by it, and when a download really fails you see why.

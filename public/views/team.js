@@ -7,14 +7,15 @@
 // dispatch (renderAgentList, renderOrgChart), routing
 // (renderOrgChart on the team nav), message handling (getWorkingAgentIds),
 // and the generated onclick handlers (showProfile, addToTeam, orgZoom,
-// startConversation, startSetupConversation).
+// orgToggleOrientation, startConversation, startSetupConversation).
 //
 // Shared state stays in app.js and is reached through the global lexical
 // environment at call time: agents, conversations, convoState,
 // agentLastActivity, workspaceAnalysis, currentWorkspacePath, ws, and
 // orgZoomOffset (read by renderOrgChart, written by orgZoom, and reset by
 // the debounced resize listener that stays in app.js as top-level window
-// wiring). ORG_PRESETS moved here as view-local state: no external
+// wiring), and orgOrientation with its storage key and the persist helper
+// (read by renderOrgChart, written by orgToggleOrientation). ORG_PRESETS moved here as view-local state: no external
 // touchpoints. d3 is the CDN-loaded d3-hierarchy global, resolved on window
 // at call time. Helpers reached the same way: getTeamAgents,
 // getPlatformAgents, formatTimeAgo, esc, getGuide. Every sentence that names
@@ -188,12 +189,21 @@ function addToTeam(agentId) {
 }
 
 
+// The chart's layout, reached off the global at call time like every other
+// shared value. Anything but 'horizontal' reads as vertical.
+function orgOrientationNow() {
+  return typeof orgOrientation !== 'undefined' && orgOrientation === 'horizontal' ? 'horizontal' : 'vertical';
+}
+
 // Card dimension presets at 1:1 scale (before scaling)
 const ORG_PRESETS = {
   leader:  { w: 280, h: 108, padV: 30, padH: 44, gap: 16, avatar: 64, icon: 28, name: 28, role: 15 },
   normal:  { w: 220, h: 86,  padV: 16, padH: 20, gap: 12, avatar: 40, icon: 18, name: 15, role: 13 },
   compact: { w: 170, h: 67,  padV: 10, padH: 14, gap: 10, avatar: 28, icon: 12, name: 14, role: 12 },
 };
+
+// Two arrows chasing each other round a circle: "rotate the chart".
+const ORG_ORIENT_ICON = '<svg width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14.5 7A6 6 0 0 0 4 5.2M3.5 2.5v3h3M3.5 11A6 6 0 0 0 14 12.8M14.5 15.5v-3h-3"/></svg>';
 
 // Render a single org card with all dimensions scaled by factor `s`
 function orgCardHtml(agent, preset, s, posStyle) {
@@ -276,79 +286,111 @@ function renderOrgChart() {
     const nodeW = isCompact ? 220 : 280;
     const nodeH = isCompact ? 160 : 190;
     const hierarchy = d3.hierarchy(treeRoot);
+    const horizontal = orgOrientationNow() === 'horizontal';
+
+    // A column is one level of the tree. When several agents have no resolvable
+    // parent the hierarchy gets a virtual root above them, which is not drawn,
+    // so the first drawn level is one deeper than the root.
+    const levelOf = (n) => n.depth - (treeRoot === rootData ? 1 : 0);
+    const levelSize = {};
+    hierarchy.each(n => {
+      if (n.data.id !== '__root__') levelSize[levelOf(n)] = (levelSize[levelOf(n)] || 0) + 1;
+    });
+
+    // Horizontal rows are one card height plus a gap. The taller leader card
+    // only sets the pitch when it shares a column with other cards.
+    const leaderShares = hierarchy.descendants().some(n => n.data.type === 'orchestrator' && levelSize[levelOf(n)] > 1);
+    const rowGap = isCompact ? 22 : 30;
+    const colGap = isCompact ? 90 : 110;
+    const rowStep = (leaderShares ? P.leader.h : P[preset].h) + rowGap;
+
     // Uniform separation so a lead with one report takes the same width as a
     // childless lead (it centres over its single report); a lead only widens
     // when it has two or more reports, spanning them exactly as the top row
     // spreads its own children. The d3 default (2x between different-parent
     // nodes) doubled the gap between two adjacent leads that each had a report.
-    d3.tree().nodeSize([nodeW, nodeH]).separation(() => 1)(hierarchy);
+    // In horizontal the breadth axis (n.x) runs down the page, one row apart.
+    d3.tree().nodeSize(horizontal ? [rowStep, 1] : [nodeW, nodeH]).separation(() => 1)(hierarchy);
 
     const cardW = (n) => Math.min(n.data.type === 'orchestrator' ? P.leader.w : P[preset].w, 320);
     const cardH = (n) => n.data.type === 'orchestrator' ? P.leader.h : P[preset].h;
 
     // Get bounds of d3 node centres
     let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+    let maxLevel = 0;
     hierarchy.each(n => {
       if (n.data.id === '__root__') return;
       minX = Math.min(minX, n.x); maxX = Math.max(maxX, n.x);
       minY = Math.min(minY, n.y); maxY = Math.max(maxY, n.y);
+      maxLevel = Math.max(maxLevel, levelOf(n));
     });
 
     // Full-scale tree dimensions (centre-to-edge + padding)
     const pad = 20;
     const halfMaxCard = Math.max(P.leader.w, P[preset].w) / 2;
-    const fullW = (maxX - minX) + halfMaxCard * 2 + pad * 2;
-    const fullH = (maxY - minY) + P.leader.h + P[preset].h + pad * 2;
+    let fullW, fullH;
+    // Horizontal columns: each is as wide as its widest card, with a gap wide
+    // enough for the connector curve. colCentre[level] is in full-scale units.
+    const colCentre = [];
+    let halfMaxH = 0;
+    if (horizontal) {
+      const colW = [];
+      hierarchy.each(n => {
+        if (n.data.id === '__root__') return;
+        colW[levelOf(n)] = Math.max(colW[levelOf(n)] || 0, cardW(n));
+        halfMaxH = Math.max(halfMaxH, cardH(n) / 2);
+      });
+      let left = pad;
+      for (let k = 0; k <= maxLevel; k++) {
+        colCentre[k] = left + colW[k] / 2;
+        left += colW[k] + colGap;
+      }
+      fullW = left - colGap + pad;
+      fullH = (maxX - minX) + halfMaxH * 2 + pad * 2;
+    } else {
+      fullW = (maxX - minX) + halfMaxCard * 2 + pad * 2;
+      fullH = (maxY - minY) + P.leader.h + P[preset].h + pad * 2;
+    }
 
-    // Compute scale: auto-fit viewport, then apply user zoom offset
+    // Compute scale: auto-fit viewport, then apply user zoom offset. A tall
+    // horizontal chart would otherwise fit the viewport and push the platform
+    // row below the fold, so its height is reserved in the fit.
+    const platformReserve = horizontal && platformAgents.length ? 170 : 0;
     const chartW = chart.clientWidth - 64;
     const chartH = chart.clientHeight - 64;
-    const fitScale = Math.min(chartW / fullW, chartH / fullH, 1);
+    const fitScale = Math.min(chartW / fullW, chartH / (fullH + platformReserve), 1);
     s = Math.max(0.15, Math.min(2, fitScale + orgZoomOffset));
 
     // Scaled coordinate helpers
     const r = (v) => Math.round(v * s);
     const sx = (x) => Math.round((x - minX + halfMaxCard + pad) * s);
     const sy = (y) => Math.round((y - minY + pad) * s);
+    // Horizontal: the card's centre column, and its centre row.
+    const colX = (n) => Math.round(colCentre[levelOf(n)] * s);
+    const rowY = (n) => Math.round((n.x - minX + halfMaxH + pad) * s);
     const totalW = r(fullW);
     const totalH = r(fullH);
 
     h += `<div class="org-layout" style="width:${totalW}px;height:${totalH}px">`;
     h += `<svg class="org-connectors" width="${totalW}" height="${totalH}"><g>`;
 
-    // Build parent-children groups for connectors
-    const parentGroups = new Map();
+    // One cubic curve per parent-child link, leaving the parent's facing edge
+    // and arriving at the child's, in both layouts. The links from the
+    // virtual root are not drawn, as before.
     hierarchy.each(n => {
-      if (n.data.id === '__root__' || !n.parent || n.parent.data.id === '__root__') return;
-      const pid = n.parent.data.id;
-      if (!parentGroups.has(pid)) parentGroups.set(pid, { parent: n.parent, children: [] });
-      parentGroups.get(pid).children.push(n);
-    });
-    hierarchy.each(n => {
-      if (n.parent && n.parent.data.id !== '__root__') return;
-      if (!n.children || n.data.id === '__root__') return;
-      const pid = n.data.id;
-      if (!parentGroups.has(pid)) parentGroups.set(pid, { parent: n, children: [] });
-      n.children.forEach(c => {
-        if (c.data.id !== '__root__') parentGroups.get(pid).children.push(c);
-      });
-    });
-
-    parentGroups.forEach(({ parent: p, children: kids }) => {
-      if (kids.length === 0) return;
-      const px = sx(p.x);
-      const srcBottom = sy(p.y) + r(cardH(p));
-      const ty = sy(kids[0].y);
-      const midY = srcBottom + Math.round((ty - srcBottom) / 2);
-
-      h += `<path d="M${px},${srcBottom} L${px},${midY}"/>`;
-      const childXs = kids.map(c => sx(c.x));
-      if (kids.length > 1) {
-        h += `<path d="M${Math.min(...childXs)},${midY} L${Math.max(...childXs)},${midY}"/>`;
+      const p = n.parent;
+      if (n.data.id === '__root__' || !p || p.data.id === '__root__') return;
+      if (horizontal) {
+        const x1 = colX(p) + r(cardW(p)) / 2, y1 = rowY(p);
+        const x2 = colX(n) - r(cardW(n)) / 2, y2 = rowY(n);
+        const mx = Math.round((x1 + x2) / 2);
+        h += `<path d="M${x1},${y1} C${mx},${y1} ${mx},${y2} ${x2},${y2}"/>`;
+      } else {
+        const x1 = sx(p.x), y1 = sy(p.y) + r(cardH(p));
+        const x2 = sx(n.x), y2 = sy(n.y);
+        const my = Math.round((y1 + y2) / 2);
+        h += `<path d="M${x1},${y1} C${x1},${my} ${x2},${my} ${x2},${y2}"/>`;
       }
-      kids.forEach(c => {
-        h += `<path d="M${sx(c.x)},${midY} L${sx(c.x)},${sy(c.y)}"/>`;
-      });
     });
 
     h += '</g></svg>';
@@ -358,7 +400,10 @@ function renderOrgChart() {
       if (n.data.id === '__root__') return;
       const isLeader = n.data.type === 'orchestrator';
       const p = isLeader ? 'leader' : preset;
-      h += orgCardHtml(n.data, p, s, `left:${sx(n.x)}px;top:${sy(n.y)}px;`);
+      const pos = horizontal
+        ? `left:${colX(n)}px;top:${Math.round(rowY(n) - r(cardH(n)) / 2)}px;`
+        : `left:${sx(n.x)}px;top:${sy(n.y)}px;`;
+      h += orgCardHtml(n.data, p, s, pos);
     });
 
     h += '</div>'; // close .org-layout
@@ -366,7 +411,7 @@ function renderOrgChart() {
     // Set scroll/centering after DOM update
     requestAnimationFrame(() => {
       const overflowX = fullW * s > chartW;
-      const overflowY = fullH * s > chartH;
+      const overflowY = (fullH + platformReserve) * s > chartH;
       chart.style.overflowX = overflowX ? 'auto' : 'hidden';
       chart.style.overflowY = overflowY ? 'auto' : 'hidden';
       chart.style.justifyContent = overflowY ? 'flex-start' : 'center';
@@ -440,6 +485,11 @@ function renderOrgChart() {
     h += '<button onclick="orgZoom(1)" title="Zoom in">+</button>';
     h += '<div class="org-zoom-divider"></div>';
     h += '<button onclick="orgZoom(-1)" title="Zoom out">&minus;</button>';
+    // The label names the control and aria-pressed carries the state, so the
+    // label does not change when the layout does.
+    const isHorizontal = orgOrientationNow() === 'horizontal';
+    h += '<div class="org-zoom-divider"></div>';
+    h += `<button class="org-orient" onclick="orgToggleOrientation()" aria-pressed="${isHorizontal}" aria-label="Horizontal layout" title="${isHorizontal ? 'Switch to vertical layout' : 'Switch to horizontal layout'}">${ORG_ORIENT_ICON}</button>`;
     h += '</div>';
   }
 
@@ -451,5 +501,17 @@ function orgZoom(dir) {
   renderOrgChart();
 }
 
-return { getWorkingAgentIds, renderAgentList, renderConvoEmptyAgents, addToTeam, orgCardHtml, renderOrgChart, orgZoom };
+// Pivot the chart 90 degrees. The fit is recomputed for the new shape, so any
+// zoom applied to the old one is dropped. The chart is redrawn from scratch,
+// which discards the focused button, so focus goes back to it for keyboard use.
+function orgToggleOrientation() {
+  orgOrientation = orgOrientationNow() === 'horizontal' ? 'vertical' : 'horizontal';
+  persist.set(ORG_ORIENTATION_KEY, orgOrientation);
+  orgZoomOffset = 0;
+  renderOrgChart();
+  const btn = document.querySelector('.org-zoom .org-orient');
+  if (btn) btn.focus();
+}
+
+return { getWorkingAgentIds, renderAgentList, renderConvoEmptyAgents, addToTeam, orgCardHtml, renderOrgChart, orgZoom, orgToggleOrientation };
 }));
