@@ -211,8 +211,12 @@ const ORG_PLATFORM = { top: 24, topNoTeam: 32, dividerH: 1, dividerGap: 24, labe
 const orgPlatformHeight = () => ORG_PLATFORM.top + ORG_PLATFORM.dividerH + ORG_PLATFORM.dividerGap
   + ORG_PLATFORM.labelLine + ORG_PLATFORM.labelGap + ORG_PRESETS.normal.h;
 
-// Two arrows chasing each other round a circle: "rotate the chart".
-const ORG_ORIENT_ICON = '<svg width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14.5 7A6 6 0 0 0 4 5.2M3.5 2.5v3h3M3.5 11A6 6 0 0 0 14 12.8M14.5 15.5v-3h-3"/></svg>';
+// The layout toggle shows the layout it switches TO: a small tree drawn top
+// down (one card over two, joined by right-angled lines) or the same tree
+// drawn left to right. Same 24-unit grid and 1.8 stroke as the app's icons.
+const ORG_ICON_SVG = (d) => `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="${d}"/></svg>`;
+const ORG_ICON_VERTICAL = ORG_ICON_SVG('M9 3h6v5H9zM3 16h6v5H3zM15 16h6v5h-6zM12 8v4M6 12h12M6 12v4M18 12v4');
+const ORG_ICON_HORIZONTAL = ORG_ICON_SVG('M3 9v6h5V9zM16 3v6h5V3zM16 15v6h5v-6zM8 12h4M12 6v12M12 6h4M12 18h4');
 
 // Render a single org card with all dimensions scaled by factor `s`
 function orgCardHtml(agent, preset, s, posStyle) {
@@ -342,7 +346,7 @@ function renderOrgChart() {
     const halfMaxCard = Math.max(P.leader.w, P[preset].w) / 2;
     let fullW, fullH;
     // Horizontal columns: each is as wide as its widest card, with a gap wide
-    // enough for the connector curve. colCentre[level] is in full-scale units.
+    // enough for the connector stubs. colCentre[level] is in full-scale units.
     const colCentre = [];
     let halfMaxH = 0;
     if (horizontal) {
@@ -386,22 +390,47 @@ function renderOrgChart() {
     h += `<div class="org-layout" style="width:${totalW}px;height:${totalH}px">`;
     h += `<svg class="org-connectors" width="${totalW}" height="${totalH}"><g>`;
 
-    // One cubic curve per parent-child link, leaving the parent's facing edge
-    // and arriving at the child's, in both layouts. The links from the
-    // virtual root are not drawn, as before.
+    // Right-angled trunk-bar-drop connectors, one group per parent. Vertical:
+    // a trunk down from the parent's bottom edge, a bar across its reports,
+    // and a drop into each report's top edge. Horizontal mirrors it: a stub out
+    // of the parent's right edge, a bar down its reports, and a stub into each
+    // report's left edge. The links from the virtual root are not drawn.
+    const parentGroups = new Map();
     hierarchy.each(n => {
-      const p = n.parent;
-      if (n.data.id === '__root__' || !p || p.data.id === '__root__') return;
+      if (n.data.id === '__root__' || !n.parent || n.parent.data.id === '__root__') return;
+      const pid = n.parent.data.id;
+      if (!parentGroups.has(pid)) parentGroups.set(pid, { parent: n.parent, children: [] });
+      parentGroups.get(pid).children.push(n);
+    });
+
+    parentGroups.forEach(({ parent: p, children: kids }) => {
+      if (kids.length === 0) return;
       if (horizontal) {
-        const x1 = colX(p) + r(cardW(p)) / 2, y1 = rowY(p);
-        const x2 = colX(n) - r(cardW(n)) / 2, y2 = rowY(n);
-        const mx = Math.round((x1 + x2) / 2);
-        h += `<path d="M${x1},${y1} C${mx},${y1} ${mx},${y2} ${x2},${y2}"/>`;
+        const srcRight = colX(p) + Math.round(r(cardW(p)) / 2);
+        const py = rowY(p);
+        const tx = Math.min(...kids.map(c => colX(c) - Math.round(r(cardW(c)) / 2)));
+        const midX = srcRight + Math.round((tx - srcRight) / 2);
+        h += `<path d="M${srcRight},${py} L${midX},${py}"/>`;
+        const childYs = kids.map(c => rowY(c));
+        if (kids.length > 1) {
+          h += `<path d="M${midX},${Math.min(...childYs)} L${midX},${Math.max(...childYs)}"/>`;
+        }
+        kids.forEach(c => {
+          h += `<path d="M${midX},${rowY(c)} L${colX(c) - Math.round(r(cardW(c)) / 2)},${rowY(c)}"/>`;
+        });
       } else {
-        const x1 = sx(p.x), y1 = sy(p.y) + r(cardH(p));
-        const x2 = sx(n.x), y2 = sy(n.y);
-        const my = Math.round((y1 + y2) / 2);
-        h += `<path d="M${x1},${y1} C${x1},${my} ${x2},${my} ${x2},${y2}"/>`;
+        const px = sx(p.x);
+        const srcBottom = sy(p.y) + r(cardH(p));
+        const ty = sy(kids[0].y);
+        const midY = srcBottom + Math.round((ty - srcBottom) / 2);
+        h += `<path d="M${px},${srcBottom} L${px},${midY}"/>`;
+        const childXs = kids.map(c => sx(c.x));
+        if (kids.length > 1) {
+          h += `<path d="M${Math.min(...childXs)},${midY} L${Math.max(...childXs)},${midY}"/>`;
+        }
+        kids.forEach(c => {
+          h += `<path d="M${sx(c.x)},${midY} L${sx(c.x)},${sy(c.y)}"/>`;
+        });
       }
     });
 
@@ -497,11 +526,13 @@ function renderOrgChart() {
     h += '<button onclick="orgZoom(1)" title="Zoom in">+</button>';
     h += '<div class="org-zoom-divider"></div>';
     h += '<button onclick="orgZoom(-1)" title="Zoom out">&minus;</button>';
-    // The label names the control and aria-pressed carries the state, so the
-    // label does not change when the layout does.
+    // No pressed state: the button shows the layout it switches to. The
+    // tooltip stays "Switch layout"; the accessible name names the target and
+    // changes with the layout.
     const isHorizontal = orgOrientationNow() === 'horizontal';
+    const orientLabel = isHorizontal ? 'Switch to top-down layout' : 'Switch to left-to-right layout';
     h += '<div class="org-zoom-divider"></div>';
-    h += `<button class="org-orient" onclick="orgToggleOrientation()" aria-pressed="${isHorizontal}" aria-label="Horizontal layout" title="${isHorizontal ? 'Switch to vertical layout' : 'Switch to horizontal layout'}">${ORG_ORIENT_ICON}</button>`;
+    h += `<button class="org-orient" onclick="orgToggleOrientation()" aria-label="${orientLabel}" title="Switch layout">${isHorizontal ? ORG_ICON_VERTICAL : ORG_ICON_HORIZONTAL}</button>`;
     h += '</div>';
   }
 
@@ -516,11 +547,14 @@ function orgZoom(dir) {
 // Pivot the chart 90 degrees. The fit is recomputed for the new shape, so any
 // zoom applied to the old one is dropped. The chart is redrawn from scratch,
 // which discards the focused button, so focus goes back to it for keyboard use.
+// The new layout fades in briefly; zoom and other redraws do not.
 function orgToggleOrientation() {
   orgOrientation = orgOrientationNow() === 'horizontal' ? 'vertical' : 'horizontal';
   persist.set(ORG_ORIENTATION_KEY, orgOrientation);
   orgZoomOffset = 0;
   renderOrgChart();
+  const tree = document.querySelector('#org-chart .org-tree');
+  if (tree) tree.classList.add('org-tree-switched');
   const btn = document.querySelector('.org-zoom .org-orient');
   if (btn) btn.focus();
 }

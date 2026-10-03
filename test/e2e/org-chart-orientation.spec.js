@@ -1,7 +1,7 @@
 'use strict';
 // Org chart orientation toggle: the team chart can be pivoted from the default
 // top-down layout (Vertical) to a left-to-right layout (Horizontal), with
-// curved connectors in both.
+// right-angled connectors in both.
 //
 // These tests drive the real rendered page and measure real geometry
 // (bounding boxes and the endpoints of the connector paths) rather than class
@@ -20,6 +20,12 @@ const ZOOM_IN = '.org-zoom button[title="Zoom in"]';
 const ZOOM_OUT = '.org-zoom button[title="Zoom out"]';
 const CARD = '.org-layout .org-card[data-org-agent]';
 const PATH = '.org-connectors path';
+
+// The control's accessible name names the layout it switches to; its tooltip
+// is the same in both states.
+const TO_HORIZONTAL = 'Switch to left-to-right layout';
+const TO_VERTICAL = 'Switch to top-down layout';
+const TITLE = 'Switch layout';
 
 // Pixel tolerance for connector endpoints and column alignment. Card edges are
 // rounded to layout units and the chart is scaled to fit, so exact equality
@@ -113,9 +119,9 @@ async function requireControl(page) {
 async function setOrientation(page, want) {
   await requireControl(page);
   const ctl = page.locator(ORIENT);
-  const pressed = (await ctl.getAttribute('aria-pressed')) === 'true';
+  const pressed = (await ctl.getAttribute('aria-label')) === TO_VERTICAL;
   if (pressed !== (want === 'horizontal')) await ctl.click();
-  await expect(page.locator(ORIENT)).toHaveAttribute('aria-pressed', want === 'horizontal' ? 'true' : 'false');
+  await expect(page.locator(ORIENT)).toHaveAttribute('aria-label', want === 'horizontal' ? TO_VERTICAL : TO_HORIZONTAL);
   await settle(page);
 }
 
@@ -144,10 +150,12 @@ async function measure(page) {
         const pt = new DOMPoint(x, y).matrixTransform(m);
         return { x: pt.x, y: pt.y };
       };
+      const points = [];
+      for (let i = 0; i + 1 < nums.length; i += 2) points.push(toScreen(nums[i], nums[i + 1]));
       return {
-        d, letters, count: nums.length,
-        start: nums.length >= 2 ? toScreen(nums[0], nums[1]) : null,
-        end: nums.length >= 2 ? toScreen(nums[nums.length - 2], nums[nums.length - 1]) : null,
+        d, letters, count: nums.length, points,
+        start: points[0] || null,
+        end: points[points.length - 1] || null,
       };
     });
     return { cards, paths };
@@ -186,6 +194,70 @@ function near(p, q) {
   return Math.abs(p.x - q.x) <= TOL && Math.abs(p.y - q.y) <= TOL;
 }
 
+// Every straight piece of every connector, in screen coordinates.
+function segmentsOf(paths) {
+  const segs = [];
+  for (const p of paths) {
+    for (let i = 0; i + 1 < p.points.length; i++) segs.push([p.points[i], p.points[i + 1]]);
+  }
+  return segs;
+}
+
+// True when point q lies on the axis-aligned segment [a, b], within TOL.
+function onSegment(q, [a, b]) {
+  return q.x >= Math.min(a.x, b.x) - TOL && q.x <= Math.max(a.x, b.x) + TOL
+      && q.y >= Math.min(a.y, b.y) - TOL && q.y <= Math.max(a.y, b.y) + TOL;
+}
+
+// True when the drawn lines join point `from` to point `to`: starting from the
+// segments that touch `from`, follow segments that touch each other until one
+// touches `to`. This does not care how many paths a link is drawn with.
+function joined(segs, from, to) {
+  const seen = new Set();
+  const queue = [];
+  segs.forEach((s, i) => { if (onSegment(from, s)) { seen.add(i); queue.push(i); } });
+  while (queue.length) {
+    const i = queue.shift();
+    if (onSegment(to, segs[i])) return true;
+    segs.forEach((s, j) => {
+      if (seen.has(j)) return;
+      const touches = onSegment(s[0], segs[i]) || onSegment(s[1], segs[i])
+        || onSegment(segs[i][0], s) || onSegment(segs[i][1], s);
+      if (touches) { seen.add(j); queue.push(j); }
+    });
+  }
+  return false;
+}
+
+// The connectors are right-angled: only straight-line commands, and every
+// segment horizontal or vertical. No curves or arcs of any kind.
+function expectRightAngles(paths) {
+  for (const p of paths) {
+    expect(p.letters.filter((l) => /[CcQqAaSsTt]/.test(l)), `curve commands in "${p.d}"`).toEqual([]);
+    expect(p.letters.every((l) => /[MLHVZmlhvz]/.test(l)), `only straight commands in "${p.d}"`).toBe(true);
+    expect(p.letters.filter((l) => /[mlhvz]/.test(l)), `relative commands in "${p.d}"`).toEqual([]);
+  }
+  for (const [a, b] of segmentsOf(paths)) {
+    const straight = Math.abs(a.x - b.x) <= 0.5 || Math.abs(a.y - b.y) <= 0.5;
+    expect(straight, `segment ${JSON.stringify(a)} to ${JSON.stringify(b)} is horizontal or vertical`).toBe(true);
+  }
+}
+
+// Every manager with reports has a line leaving its facing edge, every report
+// has a line arriving at its facing edge, and the lines join the two.
+function expectLinksDrawn(cards, paths, links, orientation) {
+  const { from, to } = ANCHORS[orientation];
+  const segs = segmentsOf(paths);
+  const endpoints = segs.flat();
+  for (const parent of new Set(links.map(([p]) => p))) {
+    expect(endpoints.some((q) => near(q, from(cards[parent]))), `a line leaves ${parent}`).toBe(true);
+  }
+  for (const [parent, child] of links) {
+    expect(endpoints.some((q) => near(q, to(cards[child]))), `a line reaches ${child}`).toBe(true);
+    expect(joined(segs, from(cards[parent]), to(cards[child])), `${parent} is joined to ${child}`).toBe(true);
+  }
+}
+
 // ── control: presence, accessibility, activation ─────────────────────────────
 
 test('the orientation control sits in the zoom stack with the documented attributes', async ({ page }) => {
@@ -194,9 +266,9 @@ test('the orientation control sits in the zoom stack with the documented attribu
   const ctl = page.locator(ORIENT);
   await expect(ctl).toHaveCount(1);
   await expect(ctl).toBeVisible();
-  await expect(ctl).toHaveAttribute('aria-pressed', 'false');
-  await expect(ctl).toHaveAttribute('aria-label', 'Horizontal layout');
-  await expect(ctl).toHaveAttribute('title', 'Switch to horizontal layout');
+  await expect(ctl).not.toHaveAttribute('aria-pressed', /.*/);
+  await expect(ctl).toHaveAttribute('aria-label', TO_HORIZONTAL);
+  await expect(ctl).toHaveAttribute('title', TITLE);
 
   // Placement: after the zoom out button, below a divider.
   const placement = await page.evaluate((sel) => {
@@ -212,22 +284,18 @@ test('the orientation control sits in the zoom stack with the documented attribu
   expect(placement).toEqual({ parentIsZoom: true, afterDivider: true, afterZoomOut: true });
 });
 
-test('the control reports pressed state and swaps its title when toggled, keeping a stable label', async ({ page }) => {
+test('the control names the layout it switches to and swaps that name when toggled, under one tooltip', async ({ page }) => {
   await mount(page, ROSTER);
   await requireControl(page);
 
   await page.locator(ORIENT).click();
   const ctl = page.locator(ORIENT);
-  await expect(ctl).toHaveAttribute('aria-pressed', 'true');
-  await expect(ctl).toHaveAttribute('title', 'Switch to vertical layout');
-  // The label names the control, the pressed state carries the on/off. It must
-  // not flip with the state or a screen reader announces the wrong thing.
-  await expect(ctl).toHaveAttribute('aria-label', 'Horizontal layout');
+  await expect(ctl).toHaveAttribute('aria-label', TO_VERTICAL);
+  await expect(ctl).toHaveAttribute('title', TITLE);
 
   await ctl.click();
-  await expect(page.locator(ORIENT)).toHaveAttribute('aria-pressed', 'false');
-  await expect(page.locator(ORIENT)).toHaveAttribute('title', 'Switch to horizontal layout');
-  await expect(page.locator(ORIENT)).toHaveAttribute('aria-label', 'Horizontal layout');
+  await expect(page.locator(ORIENT)).toHaveAttribute('aria-label', TO_HORIZONTAL);
+  await expect(page.locator(ORIENT)).toHaveAttribute('title', TITLE);
 });
 
 test('the control is a real button in the tab order, after zoom out', async ({ page }) => {
@@ -250,13 +318,13 @@ test('Enter and Space both activate the control from the keyboard', async ({ pag
   await page.locator(ORIENT).focus();
   await expect(page.locator(ORIENT)).toBeFocused();
   await page.keyboard.press('Enter');
-  await expect(page.locator(ORIENT)).toHaveAttribute('aria-pressed', 'true');
+  await expect(page.locator(ORIENT)).toHaveAttribute('aria-label', TO_VERTICAL);
 
   // The chart re-renders on toggle, so the control is looked up again rather
   // than assuming the same element survived.
   await page.locator(ORIENT).focus();
   await page.keyboard.press('Space');
-  await expect(page.locator(ORIENT)).toHaveAttribute('aria-pressed', 'false');
+  await expect(page.locator(ORIENT)).toHaveAttribute('aria-label', TO_HORIZONTAL);
 });
 
 // ── Horizontal geometry ──────────────────────────────────────────────────────
@@ -346,43 +414,55 @@ for (const orientation of ['vertical', 'horizontal']) {
 // ── connectors ───────────────────────────────────────────────────────────────
 
 for (const orientation of ['vertical', 'horizontal']) {
-  test(`connectors in ${orientation} layout are single cubic curves, one per link, ending on the child's edge`, async ({ page }) => {
+  test(`connectors in ${orientation} layout are right-angled and join every manager to every report`, async ({ page }) => {
     await mount(page, ROSTER);
     await setOrientation(page, orientation);
     const { cards, paths } = await measure(page);
-    const links = linksOf(ROSTER);
 
-    // One path per parent-child link among team cards, no more, no fewer.
-    expect(paths).toHaveLength(links.length);
+    expect(paths.length, 'connectors are drawn').toBeGreaterThan(0);
+    expectRightAngles(paths);
+    expectLinksDrawn(cards, paths, linksOf(ROSTER), orientation);
 
-    // Each path is exactly `M x,y C x,y x,y x,y`: one move, one cubic, eight
-    // numbers, and no straight or right-angle segments.
-    for (const p of paths) {
-      expect(p.letters, `path commands in "${p.d}"`).toEqual(['M', 'C']);
-      expect(p.count, `coordinates in "${p.d}"`).toBe(8);
-    }
-
-    // Each link is matched by exactly one path: it starts at the parent's
-    // facing edge midpoint and ends at the child's facing edge midpoint.
-    const { from, to } = ANCHORS[orientation];
-    const used = new Set();
-    for (const [parent, child] of links) {
-      const want = { start: from(cards[parent]), end: to(cards[child]) };
-      const idx = paths.findIndex((p, i) => !used.has(i) && near(p.start, want.start) && near(p.end, want.end));
-      expect(idx, `a path from ${parent} to ${child} (start ${JSON.stringify(want.start)}, end ${JSON.stringify(want.end)})`).toBeGreaterThanOrEqual(0);
-      used.add(idx);
+    // A card without reports has no line leaving it.
+    const { from } = ANCHORS[orientation];
+    const endpoints = segmentsOf(paths).flat();
+    for (const leaf of ['One', 'Four', 'ReportA', 'ReportB', 'ReportC']) {
+      expect(endpoints.some((q) => near(q, from(cards[leaf]))), `no line leaves ${leaf}`).toBe(false);
     }
   });
 }
 
-test('connectors are redrawn on every toggle, with no stale paths left behind', async ({ page }) => {
+test('connectors are redrawn on every toggle, with no stale lines left behind', async ({ page }) => {
   await mount(page, ROSTER);
-  const expected = linksOf(ROSTER).length;
+  const counts = {};
   for (const o of ['horizontal', 'vertical', 'horizontal', 'vertical']) {
     await setOrientation(page, o);
-    await expect(page.locator(PATH)).toHaveCount(expected);
     await expect(page.locator(CARD)).toHaveCount(ROSTER.length);
+    const { cards, paths } = await measure(page);
+    expectRightAngles(paths);
+    expectLinksDrawn(cards, paths, linksOf(ROSTER), o);
+    // The same layout always draws the same number of lines, so nothing from
+    // the previous layout survives the redraw.
+    if (counts[o] !== undefined) expect(paths.length, `${o} line count is stable`).toBe(counts[o]);
+    counts[o] = paths.length;
   }
+});
+
+test('switching the layout fades the chart in, and zooming does not', async ({ page }) => {
+  await mount(page, ROSTER);
+  await expect(page.locator('.org-tree.org-tree-switched')).toHaveCount(0);
+  await page.locator(ORIENT).click();
+  await expect(page.locator('.org-tree.org-tree-switched')).toHaveCount(1);
+  await page.locator(ZOOM_IN).click();
+  await expect(page.locator('.org-tree.org-tree-switched')).toHaveCount(0);
+});
+
+test('the layout fade is switched off when reduced motion is requested', async ({ page }) => {
+  await page.emulateMedia({ reducedMotion: 'reduce' });
+  await mount(page, ROSTER);
+  await page.locator(ORIENT).click();
+  const name = await page.locator('.org-tree').evaluate((el) => getComputedStyle(el).animationName);
+  expect(name).toBe('none');
 });
 
 // ── persistence ──────────────────────────────────────────────────────────────
@@ -390,7 +470,7 @@ test('connectors are redrawn on every toggle, with no stale paths left behind', 
 test('with nothing stored the chart opens Vertical', async ({ page }) => {
   await mount(page, ROSTER);
   expect(await page.evaluate((k) => localStorage.getItem(k), STORAGE_KEY)).toBeNull();
-  await expect(page.locator(ORIENT)).toHaveAttribute('aria-pressed', 'false');
+  await expect(page.locator(ORIENT)).toHaveAttribute('aria-label', TO_HORIZONTAL);
   const { cards } = await measure(page);
   expect(cards.Boss.bottom).toBeLessThanOrEqual(cards.One.top + 0.5);
 });
@@ -410,7 +490,7 @@ test('the Horizontal choice survives a reload', async ({ page }) => {
   await page.reload();
   await mount(page, ROSTER);
 
-  await expect(page.locator(ORIENT)).toHaveAttribute('aria-pressed', 'true');
+  await expect(page.locator(ORIENT)).toHaveAttribute('aria-label', TO_VERTICAL);
   const { cards } = await measure(page);
   expect(cards.Boss.right).toBeLessThanOrEqual(cards.One.left + 0.5);
 });
@@ -423,7 +503,7 @@ test('the Vertical choice survives a reload after having been Horizontal', async
   await page.reload();
   await mount(page, ROSTER);
 
-  await expect(page.locator(ORIENT)).toHaveAttribute('aria-pressed', 'false');
+  await expect(page.locator(ORIENT)).toHaveAttribute('aria-label', TO_HORIZONTAL);
 });
 
 test('a stored Horizontal value is honoured on the first render', async ({ page }) => {
@@ -432,7 +512,7 @@ test('a stored Horizontal value is honoured on the first render', async ({ page 
   }, STORAGE_KEY);
   await mount(page, ROSTER);
 
-  await expect(page.locator(ORIENT)).toHaveAttribute('aria-pressed', 'true');
+  await expect(page.locator(ORIENT)).toHaveAttribute('aria-label', TO_VERTICAL);
   const { cards } = await measure(page);
   expect(cards.Boss.right).toBeLessThanOrEqual(cards.One.left + 0.5);
 });
@@ -444,7 +524,7 @@ test('an unrecognised stored value falls back to Vertical and the control still 
   }, STORAGE_KEY);
   await mount(page, ROSTER);
 
-  await expect(page.locator(ORIENT)).toHaveAttribute('aria-pressed', 'false');
+  await expect(page.locator(ORIENT)).toHaveAttribute('aria-label', TO_HORIZONTAL);
   await setOrientation(page, 'horizontal');
   expect(await page.evaluate((k) => localStorage.getItem(k), STORAGE_KEY)).toBe('horizontal');
   expect(errors).toEqual([]);
@@ -461,7 +541,7 @@ test('when storage refuses the key the toggle still works for the session', asyn
   }, STORAGE_KEY);
   await mount(page, ROSTER);
 
-  await expect(page.locator(ORIENT)).toHaveAttribute('aria-pressed', 'false');
+  await expect(page.locator(ORIENT)).toHaveAttribute('aria-label', TO_HORIZONTAL);
   await setOrientation(page, 'horizontal');
   const { cards } = await measure(page);
   expect(cards.Boss.right).toBeLessThanOrEqual(cards.One.left + 0.5);
@@ -479,7 +559,7 @@ test('the orientation is kept when the window is resized', async ({ page }) => {
   await page.setViewportSize({ width: 1000, height: 640 });
   await expect.poll(() => page.evaluate(() => orgZoomOffset)).toBe(0);
 
-  await expect(page.locator(ORIENT)).toHaveAttribute('aria-pressed', 'true');
+  await expect(page.locator(ORIENT)).toHaveAttribute('aria-label', TO_VERTICAL);
   const { cards } = await measure(page);
   expect(cards.Boss.right).toBeLessThanOrEqual(cards.One.left + 0.5);
 });
@@ -528,13 +608,16 @@ for (const orientation of ['vertical', 'horizontal']) {
     const zoomed = await measure(page);
     expect(zoomed.cards.Boss.w).toBeGreaterThan(base + 1);
     // Zooming re-renders; it must not drop the chosen layout.
-    await expect(page.locator(ORIENT)).toHaveAttribute('aria-pressed', orientation === 'horizontal' ? 'true' : 'false');
-    expect(zoomed.paths).toHaveLength(linksOf(ROSTER).length);
+    await expect(page.locator(ORIENT)).toHaveAttribute('aria-label', orientation === 'horizontal' ? TO_VERTICAL : TO_HORIZONTAL);
+    expectRightAngles(zoomed.paths);
+    expectLinksDrawn(zoomed.cards, zoomed.paths, linksOf(ROSTER), orientation);
 
     await page.locator(ZOOM_OUT).click();
     await page.locator(ZOOM_OUT).click();
     expect(await page.evaluate(() => orgZoomOffset)).toBeLessThan(0);
-    expect((await measure(page)).cards.Boss.w).toBeLessThan(base - 1);
+    const shrunk = await measure(page);
+    expect(shrunk.cards.Boss.w).toBeLessThan(base - 1);
+    expectLinksDrawn(shrunk.cards, shrunk.paths, linksOf(ROSTER), orientation);
     expect(errors).toEqual([]);
   });
 
@@ -665,8 +748,12 @@ for (const orientation of ['vertical', 'horizontal']) {
 
       expectNoOverlap(cards);
 
-      // Only the leader's links are drawn: the orphan has no parent to join.
-      expect(paths).toHaveLength(kids.length);
+      // Only the leader's links are drawn: the orphan has no parent to join,
+      // so no line reaches it.
+      expectRightAngles(paths);
+      expectLinksDrawn(cards, paths, kids.map((k) => ['Boss', k]), orientation);
+      const endpoints = segmentsOf(paths).flat();
+      expect(endpoints.some((q) => near(q, ANCHORS[orientation].to(cards.Lost))), 'no line reaches Lost').toBe(false);
       expect(errors).toEqual([]);
     });
   }
@@ -767,7 +854,8 @@ for (const theme of ['dark', 'light']) {
       await expect(page.locator(ORIENT)).toBeVisible();
       const { cards, paths } = await measure(page);
       expect(Object.keys(cards)).toHaveLength(ROSTER.length);
-      expect(paths).toHaveLength(linksOf(ROSTER).length);
+      expect(paths.length, 'connectors are drawn').toBeGreaterThan(0);
+      expectLinksDrawn(cards, paths, linksOf(ROSTER), orientation);
 
       // Connectors take their colour from the theme token, so they stay
       // visible against either background.
