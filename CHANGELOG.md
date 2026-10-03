@@ -4,9 +4,7 @@ All notable changes to Rundock are documented here. Format follows [Keep a Chang
 
 > Versions prior to 0.7.1 used minor bumps for all changes. From 0.7.1 onward, minor = new capabilities, patch = refinements and fixes.
 
-## Unreleased
-
-**Name:** Packages On Windows
+## 0.15.2: Packages On Windows (2026-10-02)
 
 The team chart can now be turned on its side, with smooth curved lines between agents, and packages install on Windows again. A button in the zoom controls switches between the top-down chart and a left-to-right one, and Rundock remembers your choice.
 
